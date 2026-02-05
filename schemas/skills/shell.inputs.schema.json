@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/skills/shell.inputs.schema.json",
+  "title": "ShellInputs",
+  "type": "object",
+  "properties": {
+    "command": {"type": "string"},
+    "args": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": [],
+  "additionalProperties": false
+}

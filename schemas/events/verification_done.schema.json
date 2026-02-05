@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/verification_done.schema.json",
+  "title": "verification_done",
+  "type": "object",
+  "properties": {
+    "details": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "details"
+  ],
+  "additionalProperties": false
+}

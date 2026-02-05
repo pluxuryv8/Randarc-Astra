@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/conflict_detected.schema.json",
+  "title": "conflict_detected",
+  "type": "object",
+  "properties": {
+    "conflict_id": {
+      "type": "string"
+    },
+    "fact_key": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "conflict_id",
+    "fact_key"
+  ],
+  "additionalProperties": false
+}

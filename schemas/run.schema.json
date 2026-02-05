@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/run.schema.json",
+  "title": "Run",
+  "type": "object",
+  "properties": {
+    "id": {"type": "string"},
+    "project_id": {"type": "string"},
+    "query_text": {"type": "string"},
+    "mode": {"type": "string", "enum": ["plan_only", "research", "execute_confirm", "autopilot_safe"]},
+    "parent_run_id": {"type": ["string", "null"]},
+    "purpose": {"type": ["string", "null"]},
+    "status": {"type": "string", "enum": ["created", "planning", "running", "paused", "done", "failed", "canceled"]},
+    "created_at": {"type": "string"},
+    "started_at": {"type": ["string", "null"]},
+    "finished_at": {"type": ["string", "null"]}
+  },
+  "required": ["id", "project_id", "query_text", "mode", "status", "created_at"],
+  "additionalProperties": false
+}

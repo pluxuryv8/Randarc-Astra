@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/task_progress.schema.json",
+  "title": "task_progress",
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "step_id": {
+      "type": "string"
+    },
+    "progress": {
+      "type": "object",
+      "properties": {
+        "current": {
+          "type": "integer"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "current",
+        "total",
+        "unit"
+      ],
+      "additionalProperties": false
+    },
+    "last_message": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "step_id",
+    "progress",
+    "last_message"
+  ],
+  "additionalProperties": false
+}

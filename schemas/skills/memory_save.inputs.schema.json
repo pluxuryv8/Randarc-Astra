@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/skills/memory_save.inputs.schema.json",
+  "title": "MemorySaveInputs",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

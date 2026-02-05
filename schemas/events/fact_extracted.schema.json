@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/fact_extracted.schema.json",
+  "title": "fact_extracted",
+  "type": "object",
+  "properties": {
+    "fact_id": {
+      "type": "string"
+    },
+    "key": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "fact_id",
+    "key"
+  ],
+  "additionalProperties": false
+}

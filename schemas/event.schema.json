@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/event.schema.json",
+  "title": "Event",
+  "type": "object",
+  "properties": {
+    "id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "ts": {"type": "integer"},
+    "type": {
+      "type": "string",
+      "enum": [
+        "run_created",
+        "plan_created",
+        "run_started",
+        "run_done",
+        "run_failed",
+        "run_canceled",
+        "run_paused",
+        "run_resumed",
+        "task_queued",
+        "task_started",
+        "task_progress",
+        "task_failed",
+        "task_retried",
+        "task_done",
+        "source_found",
+        "source_fetched",
+        "fact_extracted",
+        "artifact_created",
+        "conflict_detected",
+        "verification_done",
+        "approval_requested",
+        "approval_approved",
+        "approval_rejected",
+        "autopilot_state"
+      ]
+    },
+    "level": {"type": "string", "enum": ["info", "warn", "error"]},
+    "message": {"type": "string"},
+    "payload": {"type": "object"},
+    "task_id": {"type": ["string", "null"]},
+    "step_id": {"type": ["string", "null"]}
+  },
+  "required": ["id", "run_id", "ts", "type", "level", "message", "payload"],
+  "additionalProperties": false
+}

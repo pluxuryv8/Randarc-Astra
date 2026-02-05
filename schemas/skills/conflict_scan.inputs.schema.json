@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/skills/conflict_scan.inputs.schema.json",
+  "title": "ConflictScanInputs",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

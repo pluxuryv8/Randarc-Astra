@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/run_resumed.schema.json",
+  "title": "run_resumed",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

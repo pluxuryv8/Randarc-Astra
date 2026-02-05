@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/fact.schema.json",
+  "title": "Fact",
+  "type": "object",
+  "properties": {
+    "id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "key": {"type": "string"},
+    "value": {},
+    "confidence": {"type": "number"},
+    "source_ids": {"type": "array", "items": {"type": "string"}},
+    "created_at": {"type": "string"}
+  },
+  "required": ["id", "run_id", "key", "value", "confidence", "source_ids", "created_at"],
+  "additionalProperties": false
+}

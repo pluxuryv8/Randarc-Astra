@@ -1,0 +1,10 @@
+{
+  "name": "web_research",
+  "version": "0.1.0",
+  "capabilities": ["web_search", "source_discovery"],
+  "inputs_schema": "schemas/skills/web_research.inputs.schema.json",
+  "outputs_schema": "schemas/skill_result.schema.json",
+  "side_effects": ["network"],
+  "providers": ["yandex"],
+  "scopes": "safe"
+}

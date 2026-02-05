@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/skills/web_research.inputs.schema.json",
+  "title": "WebResearchInputs",
+  "type": "object",
+  "properties": {
+    "query": {"type": "string"},
+    "urls": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": [],
+  "additionalProperties": false
+}

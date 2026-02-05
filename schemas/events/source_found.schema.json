@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/source_found.schema.json",
+  "title": "source_found",
+  "type": "object",
+  "properties": {
+    "source_id": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string"
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "source_id",
+    "url",
+    "title"
+  ],
+  "additionalProperties": false
+}

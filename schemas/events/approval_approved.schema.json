@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/approval_approved.schema.json",
+  "title": "approval_approved",
+  "type": "object",
+  "properties": {
+    "approval_id": {
+      "type": "string"
+    },
+    "decision": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "approval_id"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,10 @@
+{
+  "name": "memory_save",
+  "version": "0.1.0",
+  "capabilities": ["memory", "storage"],
+  "inputs_schema": "schemas/skills/memory_save.inputs.schema.json",
+  "outputs_schema": "schemas/skill_result.schema.json",
+  "side_effects": ["database_write"],
+  "providers": [],
+  "scopes": "safe"
+}

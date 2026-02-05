@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/source.schema.json",
+  "title": "Source",
+  "type": "object",
+  "properties": {
+    "id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "url": {"type": "string"},
+    "title": {"type": ["string", "null"]},
+    "domain": {"type": ["string", "null"]},
+    "quality": {"type": ["string", "null"], "enum": ["primary", "media", "forum", "unknown", null]},
+    "retrieved_at": {"type": ["string", "null"]},
+    "snippet": {"type": ["string", "null"]},
+    "pinned": {"type": "boolean"}
+  },
+  "required": ["id", "run_id", "url", "pinned"],
+  "additionalProperties": false
+}

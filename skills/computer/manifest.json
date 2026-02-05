@@ -1,0 +1,10 @@
+{
+  "name": "computer",
+  "version": "0.1.0",
+  "capabilities": ["os_control", "mouse", "keyboard", "screen"],
+  "inputs_schema": "schemas/skills/computer.inputs.schema.json",
+  "outputs_schema": "schemas/skill_result.schema.json",
+  "side_effects": ["os_control"],
+  "providers": [],
+  "scopes": "confirm_required"
+}

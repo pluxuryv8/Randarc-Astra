@@ -1,0 +1,10 @@
+{
+  "name": "shell",
+  "version": "0.1.0",
+  "capabilities": ["shell", "bash"],
+  "inputs_schema": "schemas/skills/shell.inputs.schema.json",
+  "outputs_schema": "schemas/skill_result.schema.json",
+  "side_effects": ["shell_exec"],
+  "providers": [],
+  "scopes": "confirm_required"
+}

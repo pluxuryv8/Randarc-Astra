@@ -1,0 +1,10 @@
+{
+  "name": "conflict_scan",
+  "version": "0.1.0",
+  "capabilities": ["conflict_detection", "fact_validation"],
+  "inputs_schema": "schemas/skills/conflict_scan.inputs.schema.json",
+  "outputs_schema": "schemas/skill_result.schema.json",
+  "side_effects": [],
+  "providers": [],
+  "scopes": "safe"
+}

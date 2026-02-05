@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/task_done.schema.json",
+  "title": "task_done",
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "step_id": {
+      "type": "string"
+    },
+    "finished_at": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "step_id",
+    "finished_at"
+  ],
+  "additionalProperties": false
+}

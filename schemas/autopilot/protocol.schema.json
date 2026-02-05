@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/autopilot/protocol.schema.json",
+  "title": "AutopilotProtocol",
+  "type": "object",
+  "properties": {
+    "goal": {"type": "string"},
+    "step_summary": {"type": "string"},
+    "plan": {"type": "array", "items": {"type": "string"}},
+    "reason": {"type": "string"},
+    "actions": {
+      "type": "array",
+      "items": {"$ref": "schemas/autopilot/action.schema.json"}
+    },
+    "needs_user": {"type": "boolean"},
+    "ask_confirm": {
+      "type": "object",
+      "properties": {
+        "required": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "proposed_effect": {"type": "string"}
+      },
+      "required": ["required", "reason", "proposed_effect"],
+      "additionalProperties": false
+    },
+    "done": {"type": "boolean"}
+  },
+  "required": ["goal", "step_summary", "plan", "actions", "needs_user", "ask_confirm", "done"],
+  "additionalProperties": false
+}

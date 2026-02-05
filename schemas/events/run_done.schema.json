@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/run_done.schema.json",
+  "title": "run_done",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/task.schema.json",
+  "title": "Task",
+  "type": "object",
+  "properties": {
+    "id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "plan_step_id": {"type": "string"},
+    "attempt": {"type": "integer"},
+    "status": {"type": "string", "enum": ["queued", "running", "waiting_approval", "done", "failed", "canceled"]},
+    "started_at": {"type": ["string", "null"]},
+    "finished_at": {"type": ["string", "null"]},
+    "error": {"type": ["string", "null"]},
+    "duration_ms": {"type": ["integer", "null"]}
+  },
+  "required": ["id", "run_id", "plan_step_id", "attempt", "status"],
+  "additionalProperties": false
+}

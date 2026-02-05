@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/skills/report.inputs.schema.json",
+  "title": "ReportInputs",
+  "type": "object",
+  "properties": {
+    "format": {"type": "string", "enum": ["markdown"]}
+  },
+  "required": [],
+  "additionalProperties": false
+}

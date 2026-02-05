@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/artifact.schema.json",
+  "title": "Artifact",
+  "type": "object",
+  "properties": {
+    "id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "type": {"type": "string", "enum": ["report_md", "report_pdf", "json_export", "transcript", "note", "autopilot_log_json", "autopilot_summary_md"]},
+    "title": {"type": "string"},
+    "content_uri": {"type": "string"},
+    "created_at": {"type": "string"},
+    "meta": {"type": "object"}
+  },
+  "required": ["id", "run_id", "type", "title", "content_uri", "created_at", "meta"],
+  "additionalProperties": false
+}

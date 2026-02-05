@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/plan_created.schema.json",
+  "title": "plan_created",
+  "type": "object",
+  "properties": {
+    "steps_count": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "steps_count"
+  ],
+  "additionalProperties": false
+}

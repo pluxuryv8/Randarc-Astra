@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/plan_step.schema.json",
+  "title": "PlanStep",
+  "type": "object",
+  "properties": {
+    "id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "step_index": {"type": "integer"},
+    "title": {"type": "string"},
+    "skill_name": {"type": "string"},
+    "inputs": {"type": "object"},
+    "depends_on": {"type": "array", "items": {"type": "integer"}},
+    "status": {"type": "string", "enum": ["created", "running", "done", "failed", "canceled"]}
+  },
+  "required": ["id", "run_id", "step_index", "title", "skill_name", "inputs", "depends_on", "status"],
+  "additionalProperties": false
+}

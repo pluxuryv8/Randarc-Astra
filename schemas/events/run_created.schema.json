@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/run_created.schema.json",
+  "title": "run_created",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "query_text": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "mode",
+    "query_text"
+  ],
+  "additionalProperties": false
+}

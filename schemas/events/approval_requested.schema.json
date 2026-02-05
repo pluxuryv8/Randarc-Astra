@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/approval_requested.schema.json",
+  "title": "approval_requested",
+  "type": "object",
+  "properties": {
+    "approval_id": {
+      "type": "string"
+    },
+    "scope": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "proposed_actions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "required": [
+    "approval_id",
+    "scope",
+    "title",
+    "description",
+    "proposed_actions"
+  ],
+  "additionalProperties": false
+}

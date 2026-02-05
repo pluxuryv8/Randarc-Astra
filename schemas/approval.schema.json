@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/approval.schema.json",
+  "title": "ApprovalRequest",
+  "type": "object",
+  "properties": {
+    "id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "task_id": {"type": "string"},
+    "created_at": {"type": "string"},
+    "scope": {"type": "string", "enum": ["computer", "bash"]},
+    "title": {"type": "string"},
+    "description": {"type": ["string", "null"]},
+    "proposed_actions": {"type": "array", "items": {"type": "object"}},
+    "status": {"type": "string", "enum": ["pending", "approved", "rejected", "expired"]},
+    "decided_at": {"type": ["string", "null"]},
+    "decided_by": {"type": ["string", "null"]}
+  },
+  "required": ["id", "run_id", "task_id", "created_at", "scope", "title", "proposed_actions", "status"],
+  "additionalProperties": false
+}

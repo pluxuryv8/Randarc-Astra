@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/skills/autopilot_computer.inputs.schema.json",
+  "title": "AutopilotComputerInputs",
+  "type": "object",
+  "properties": {
+    "goal": {"type": "string"},
+    "hints": {"type": "array", "items": {"type": "string"}},
+    "max_cycles": {"type": "integer", "minimum": 1},
+    "max_actions": {"type": "integer", "minimum": 1},
+    "screenshot_width": {"type": "integer", "minimum": 320},
+    "quality": {"type": "integer", "minimum": 30, "maximum": 90}
+  },
+  "required": ["goal"],
+  "additionalProperties": false
+}

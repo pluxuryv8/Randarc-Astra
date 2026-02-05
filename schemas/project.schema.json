@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/project.schema.json",
+  "title": "Project",
+  "type": "object",
+  "properties": {
+    "id": {"type": "string"},
+    "name": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "settings": {"type": "object"},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"}
+  },
+  "required": ["id", "name", "tags", "settings", "created_at", "updated_at"],
+  "additionalProperties": false
+}

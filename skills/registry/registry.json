@@ -1,0 +1,138 @@
+{
+  "skills": [
+    {
+      "name": "extract_facts",
+      "version": "0.1.0",
+      "capabilities": [
+        "facts",
+        "extraction",
+        "summaries"
+      ],
+      "inputs_schema": "schemas/skills/extract_facts.inputs.schema.json",
+      "outputs_schema": "schemas/skill_result.schema.json",
+      "side_effects": [],
+      "providers": [
+        "openai-compatible"
+      ],
+      "scopes": "safe",
+      "tests": null
+    },
+    {
+      "name": "conflict_scan",
+      "version": "0.1.0",
+      "capabilities": [
+        "conflict_detection",
+        "fact_validation"
+      ],
+      "inputs_schema": "schemas/skills/conflict_scan.inputs.schema.json",
+      "outputs_schema": "schemas/skill_result.schema.json",
+      "side_effects": [],
+      "providers": [],
+      "scopes": "safe",
+      "tests": null
+    },
+    {
+      "name": "shell",
+      "version": "0.1.0",
+      "capabilities": [
+        "shell",
+        "bash"
+      ],
+      "inputs_schema": "schemas/skills/shell.inputs.schema.json",
+      "outputs_schema": "schemas/skill_result.schema.json",
+      "side_effects": [
+        "shell_exec"
+      ],
+      "providers": [],
+      "scopes": "confirm_required",
+      "tests": null
+    },
+    {
+      "name": "web_research",
+      "version": "0.1.0",
+      "capabilities": [
+        "web_search",
+        "source_discovery"
+      ],
+      "inputs_schema": "schemas/skills/web_research.inputs.schema.json",
+      "outputs_schema": "schemas/skill_result.schema.json",
+      "side_effects": [
+        "network"
+      ],
+      "providers": [
+        "yandex"
+      ],
+      "scopes": "safe",
+      "tests": null
+    },
+    {
+      "name": "memory_save",
+      "version": "0.1.0",
+      "capabilities": [
+        "memory",
+        "storage"
+      ],
+      "inputs_schema": "schemas/skills/memory_save.inputs.schema.json",
+      "outputs_schema": "schemas/skill_result.schema.json",
+      "side_effects": [
+        "database_write"
+      ],
+      "providers": [],
+      "scopes": "safe",
+      "tests": null
+    },
+    {
+      "name": "autopilot_computer",
+      "version": "0.1.0",
+      "capabilities": [
+        "autopilot",
+        "computer_vision",
+        "os_control"
+      ],
+      "inputs_schema": "schemas/skills/autopilot_computer.inputs.schema.json",
+      "outputs_schema": "schemas/skill_result.schema.json",
+      "side_effects": [
+        "os_control"
+      ],
+      "providers": [
+        "vision-llm"
+      ],
+      "scopes": "safe",
+      "tests": null
+    },
+    {
+      "name": "report",
+      "version": "0.1.0",
+      "capabilities": [
+        "reporting",
+        "artifacts"
+      ],
+      "inputs_schema": "schemas/skills/report.inputs.schema.json",
+      "outputs_schema": "schemas/skill_result.schema.json",
+      "side_effects": [
+        "filesystem_write"
+      ],
+      "providers": [],
+      "scopes": "safe",
+      "tests": null
+    },
+    {
+      "name": "computer",
+      "version": "0.1.0",
+      "capabilities": [
+        "os_control",
+        "mouse",
+        "keyboard",
+        "screen"
+      ],
+      "inputs_schema": "schemas/skills/computer.inputs.schema.json",
+      "outputs_schema": "schemas/skill_result.schema.json",
+      "side_effects": [
+        "os_control"
+      ],
+      "providers": [],
+      "scopes": "confirm_required",
+      "tests": null
+    }
+  ]
+}

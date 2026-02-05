@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/source_fetched.schema.json",
+  "title": "source_fetched",
+  "type": "object",
+  "properties": {
+    "count": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "count"
+  ],
+  "additionalProperties": false
+}

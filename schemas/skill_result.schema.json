@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/skill_result.schema.json",
+  "title": "SkillResult",
+  "type": "object",
+  "properties": {
+    "what_i_did": {"type": "string"},
+    "sources": {"type": "array", "items": {"$ref": "source.schema.json"}},
+    "facts": {"type": "array", "items": {"$ref": "fact.schema.json"}},
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "number"},
+    "next_actions": {"type": "array", "items": {"type": "string"}},
+    "artifacts": {"type": "array", "items": {"$ref": "artifact.schema.json"}},
+    "events": {"type": "array", "items": {"type": "object"}}
+  },
+  "required": ["what_i_did", "sources", "facts", "assumptions", "confidence", "next_actions", "artifacts", "events"],
+  "additionalProperties": false
+}

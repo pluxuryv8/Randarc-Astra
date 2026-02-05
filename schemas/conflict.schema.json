@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/conflict.schema.json",
+  "title": "Conflict",
+  "type": "object",
+  "properties": {
+    "id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "fact_key": {"type": "string"},
+    "group": {"type": "array", "items": {"type": "object"}},
+    "status": {"type": "string", "enum": ["open", "resolved"]}
+  },
+  "required": ["id", "run_id", "fact_key", "group", "status"],
+  "additionalProperties": false
+}

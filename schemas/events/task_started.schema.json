@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/task_started.schema.json",
+  "title": "task_started",
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string"
+    },
+    "step_id": {
+      "type": "string"
+    },
+    "skill_name": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "step_id",
+    "skill_name",
+    "started_at"
+  ],
+  "additionalProperties": false
+}
