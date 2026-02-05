@@ -16,6 +16,10 @@ apps/desktop/src-tauri/target/
 .astra/
 artifacts/
 
+# Secrets
+.env
+.env.*
+
 # Доноры (для справки, не участвуют в сборке)
 third_party/_donors/
 

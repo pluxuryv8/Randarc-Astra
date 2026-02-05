@@ -9,6 +9,14 @@ if [ "${1:-}" = "--background" ]; then
   MODE="background"
 fi
 
+# Load .env if present (not committed)
+if [ -f ".env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source ".env"
+  set +a
+fi
+
 if ! command -v node >/dev/null 2>&1; then
   echo "Нужен Node.js (node). Установи Node и повтори запуск." >&2
   exit 1
