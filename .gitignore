@@ -1,4 +1,7 @@
 # Python
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
 __pycache__/
 *.pyc
 .venv/
@@ -7,21 +10,20 @@ __pycache__/
 # Node
 node_modules/
 dist/
-
 # Tauri
 /src-tauri/target/
 apps/desktop/src-tauri/target/
-
 # Runtime data
 .astra/
 artifacts/
-
+logs
+logs/
 # Secrets
 .env
 .env.*
-
+config/local.secrets.json
+config/*.secrets.json
 # Доноры (для справки, не участвуют в сборке)
 third_party/_donors/
-
 # OS
 .DS_Store
