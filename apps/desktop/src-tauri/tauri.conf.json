@@ -18,6 +18,9 @@
       },
       "globalShortcut": {
         "all": true
+      },
+      "window": {
+        "all": true
       }
     },
     "windows": [
