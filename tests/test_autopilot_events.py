@@ -57,7 +57,7 @@ def test_autopilot_events_persist(monkeypatch, tmp_path):
     monkeypatch.setattr(llm_client, "build_llm_client", lambda settings: StubLLM())
 
     # stub bridge on the existing skill instance
-    from skills.autopilot_computer import skill as autopilot_skill
+    from skills.autopilot_computer.skill import skill as autopilot_skill
     autopilot_skill.bridge = StubBridge()
 
     project = store.create_project(
