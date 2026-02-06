@@ -12,11 +12,11 @@ import {
   resumeRun,
   getSnapshot,
   initAuth,
+  checkApiStatus,
   getSessionToken,
   checkPermissions,
-  setApiKey,
-  getApiKey,
-  storeOpenAIKey,
+  storeOpenAIKeyLocal,
+  getLocalOpenAIStatus,
   approve,
   reject,
   retryStep,
@@ -26,6 +26,7 @@ import {
 import { ru } from "./i18n/ru";
 import { listen } from "@tauri-apps/api/event";
 import { appWindow, LogicalPosition, LogicalSize } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/tauri";
 
 const t = ru;
 
@@ -70,9 +71,14 @@ const HUD_WINDOW_MODE = "astra_window_mode";
 const HUD_WINDOW_SIZE = "astra_window_size";
 const HUD_OVERLAY_SIZE = "astra_overlay_size";
 const HUD_OVERLAY_POS = "astra_overlay_pos";
+const SETTINGS_VIEW = "settings";
 
 function label(map: Record<string, string>, key: string, fallback: string) {
   return map[key] || fallback;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -102,6 +108,7 @@ function formatCoverage(metrics: any) {
 }
 
 function AstraHud() {
+  const isSettingsView = new URLSearchParams(window.location.search).get("view") === SETTINGS_VIEW;
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProject, setSelectedProject] = useState<any | null>(null);
   const [run, setRun] = useState<any | null>(null);
@@ -120,17 +127,26 @@ function AstraHud() {
   const [permissions, setPermissions] = useState<any | null>(null);
   const [openaiKey, setOpenaiKeyValue] = useState("");
   const [apiKeyReady, setApiKeyReady] = useState(false);
+  const [keyStored, setKeyStored] = useState(false);
   const [savingVault, setSavingVault] = useState(false);
+  const [settingsMessage, setSettingsMessage] = useState<{ text: string; tone: "success" | "error" | "info" } | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [apiAvailable, setApiAvailable] = useState<boolean | null>(null);
   const [modelName, setModelName] = useState("gpt-4.1-mini");
   const [loopDelayMs, setLoopDelayMs] = useState(650);
   const [maxActions, setMaxActions] = useState(6);
   const [maxCycles, setMaxCycles] = useState(30);
   const [windowMode, setWindowMode] = useState<"window" | "overlay">("window");
+  const settingsSizeRef = React.useRef<{ width: number; height: number } | null>(null);
+  const settingsPrevModeRef = React.useRef<"window" | "overlay" | null>(null);
 
   const eventSourceRef = React.useRef<EventSource | null>(null);
   const refreshLock = React.useRef(false);
 
   useEffect(() => {
+    if (isSettingsView) {
+      setSettingsOpen(true);
+    }
     initAuth()
       .then(async () => {
         await loadProjects();
@@ -142,6 +158,74 @@ function AstraHud() {
       })
       .catch((err) => setStatus(err.message || t.errors.authInit));
   }, []);
+
+  useEffect(() => {
+    const checkApi = async () => {
+      const ok = await checkApiStatus();
+      setApiAvailable(ok);
+    };
+    if (settingsOpen || isSettingsView) {
+      checkApi();
+    }
+  }, [settingsOpen, isSettingsView]);
+
+  useEffect(() => {
+    const checkLocalKey = async () => {
+      try {
+        const res = await getLocalOpenAIStatus();
+        setKeyStored(res.stored);
+      } catch {
+        setKeyStored(false);
+      }
+    };
+    if (settingsOpen || isSettingsView) {
+      checkLocalKey();
+    }
+  }, [settingsOpen, isSettingsView]);
+
+  useEffect(() => {
+    if (!settingsMessage) return;
+    const timer = setTimeout(() => setSettingsMessage(null), 5000);
+    return () => clearTimeout(timer);
+  }, [settingsMessage]);
+
+  useEffect(() => {
+    if (isSettingsView) return;
+    const resizeForSettings = async () => {
+      if (settingsOpen) {
+        const size = await appWindow.innerSize();
+        settingsSizeRef.current = { width: size.width, height: size.height };
+        const targetWidth = Math.max(size.width, 980);
+        const targetHeight = Math.max(size.height, 700);
+        if (windowMode === "overlay") {
+          settingsPrevModeRef.current = "overlay";
+          await applyWindowMode(false, { width: targetWidth, height: targetHeight });
+          await sleep(120);
+          await appWindow.setSize(new LogicalSize(targetWidth, targetHeight));
+        } else {
+          await appWindow.setMinSize(new LogicalSize(820, 520));
+          await sleep(80);
+          await appWindow.setSize(new LogicalSize(targetWidth, targetHeight));
+          await sleep(80);
+          await appWindow.setSize(new LogicalSize(targetWidth, targetHeight));
+        }
+      } else if (settingsSizeRef.current) {
+        const prev = settingsSizeRef.current;
+        settingsSizeRef.current = null;
+        if (settingsPrevModeRef.current === "overlay") {
+          settingsPrevModeRef.current = null;
+          await applyOverlayMode(false);
+          await sleep(80);
+          await appWindow.setSize(new LogicalSize(prev.width, prev.height));
+        } else {
+          await appWindow.setMinSize(windowMode === "overlay" ? new LogicalSize(420, 200) : new LogicalSize(640, 360));
+          await sleep(80);
+          await appWindow.setSize(new LogicalSize(prev.width, prev.height));
+        }
+      }
+    };
+    resizeForSettings();
+  }, [settingsOpen, windowMode, isSettingsView]);
 
   useEffect(() => {
     if (!selectedProject && projects.length > 0) {
@@ -167,6 +251,7 @@ function AstraHud() {
   }, []);
 
   useEffect(() => {
+    if (isSettingsView) return;
     const unlisten = listen("autopilot_stop_hotkey", async () => {
       if (run) {
         await cancelRun(run.id);
@@ -180,9 +265,10 @@ function AstraHud() {
       unlisten.then((fn) => fn());
       unlistenToggle.then((fn) => fn());
     };
-  }, [run, windowMode]);
+  }, [run, windowMode, isSettingsView]);
 
   useEffect(() => {
+    if (isSettingsView) return;
     const saved = (localStorage.getItem(HUD_WINDOW_MODE) as "window" | "overlay") || "window";
     if (saved === "overlay") {
       applyOverlayMode();
@@ -207,22 +293,27 @@ function AstraHud() {
       unlistenMove.then((fn) => fn());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isSettingsView]);
 
-  async function applyWindowMode() {
+  async function applyWindowMode(persist = true, overrideSize?: { width: number; height: number }) {
     const sizeRaw = localStorage.getItem(HUD_WINDOW_SIZE);
-    const size = sizeRaw ? JSON.parse(sizeRaw) : { width: 900, height: 520 };
+    const size = overrideSize || (sizeRaw ? JSON.parse(sizeRaw) : { width: 900, height: 520 });
     await appWindow.setDecorations(true);
     await appWindow.setAlwaysOnTop(false);
     await appWindow.setFullscreen(false);
     await appWindow.setResizable(true);
     await appWindow.setMinSize(new LogicalSize(640, 360));
+    await sleep(80);
     await appWindow.setSize(new LogicalSize(size.width, size.height));
-    localStorage.setItem(HUD_WINDOW_MODE, "window");
+    await sleep(80);
+    await appWindow.setSize(new LogicalSize(size.width, size.height));
+    if (persist) {
+      localStorage.setItem(HUD_WINDOW_MODE, "window");
+    }
     setWindowMode("window");
   }
 
-  async function applyOverlayMode() {
+  async function applyOverlayMode(persist = true) {
     const sizeRaw = localStorage.getItem(HUD_OVERLAY_SIZE);
     const posRaw = localStorage.getItem(HUD_OVERLAY_POS);
     const size = sizeRaw ? JSON.parse(sizeRaw) : { width: 520, height: 220 };
@@ -232,11 +323,16 @@ function AstraHud() {
     await appWindow.setFullscreen(false);
     await appWindow.setResizable(true);
     await appWindow.setMinSize(new LogicalSize(420, 200));
+    await sleep(80);
+    await appWindow.setSize(new LogicalSize(size.width, size.height));
+    await sleep(80);
     await appWindow.setSize(new LogicalSize(size.width, size.height));
     if (pos) {
       await appWindow.setPosition(new LogicalPosition(pos.x, pos.y));
     }
-    localStorage.setItem(HUD_WINDOW_MODE, "overlay");
+    if (persist) {
+      localStorage.setItem(HUD_WINDOW_MODE, "overlay");
+    }
     setWindowMode("overlay");
   }
 
@@ -246,6 +342,22 @@ function AstraHud() {
     } else {
       await applyOverlayMode();
     }
+  }
+
+  async function openSettingsWindow() {
+    try {
+      await invoke("open_settings_window");
+    } catch (err: any) {
+      setStatus(err?.message || "Не удалось открыть окно настроек");
+    }
+  }
+
+  function closeSettingsWindow() {
+    if (isSettingsView) {
+      appWindow.close();
+      return;
+    }
+    setSettingsOpen(false);
   }
 
   async function loadProjects() {
@@ -277,50 +389,47 @@ function AstraHud() {
 
   async function ensureApiKey(): Promise<boolean> {
     if (apiKeyReady) return true;
-    const stored = await getApiKey();
-    if (!stored) {
-      setStatus("API-ключ не найден. Откройте настройки и сохраните ключ.");
+    try {
+      const res = await getLocalOpenAIStatus();
+      if (!res.stored) {
+        setStatus("API-ключ не найден. Откройте настройки и сохраните ключ.");
+        return false;
+      }
+      setApiKeyReady(true);
+      return true;
+    } catch (err: any) {
+      setStatus(err?.message || "Не удалось проверить ключ. Откройте настройки.");
       return false;
     }
-    await storeOpenAIKey(stored);
-    setApiKeyReady(true);
-    return true;
   }
 
   async function handleSaveProvider() {
     if (!openaiKey) {
       setStatus(t.onboarding.keyRequired);
-      return;
-    }
-    if (!selectedProject) {
-      setStatus(t.projects.empty);
+      setSettingsMessage({ text: t.onboarding.keyRequired, tone: "error" });
       return;
     }
     try {
       setSavingVault(true);
-      await setApiKey(openaiKey);
-      await storeOpenAIKey(openaiKey);
-      await applySettingsToProject(selectedProject.id);
-      setApiKeyReady(true);
+      await storeOpenAIKeyLocal(openaiKey);
+      setKeyStored(true);
+      if (selectedProject) {
+        await applySettingsToProject(selectedProject.id);
+        setApiKeyReady(true);
+        setSettingsMessage({ text: "Ключ сохранён локально и активирован", tone: "success" });
+      } else {
+        setSettingsMessage({ text: "Ключ сохранён локально. Запустите API для активации.", tone: "info" });
+      }
       setOpenaiKeyValue("");
-      setStatus("Ключ сохранён в Keychain");
+      setStatus("Ключ сохранён локально");
     } catch (err: any) {
       setStatus(err.message || t.onboarding.vaultError);
+      setSettingsMessage({ text: err.message || t.onboarding.vaultError, tone: "error" });
     } finally {
       setSavingVault(false);
     }
   }
 
-  async function handleLoadFromKeychain() {
-    const stored = await getApiKey();
-    if (!stored) {
-      setStatus("В Keychain нет ключа. Сохраните ключ вручную.");
-      return;
-    }
-    await storeOpenAIKey(stored);
-    setApiKeyReady(true);
-    setStatus("Ключ загружен из Keychain");
-  }
 
   async function handleRunCommand() {
     if (!selectedProject || !queryText.trim()) return;
@@ -450,6 +559,11 @@ function AstraHud() {
 
   const pendingApprovals = useMemo(() => approvals.filter((a) => a.status === "pending"), [approvals]);
   const reportArtifact = useMemo(() => artifacts.find((a) => a.type === "report_md"), [artifacts]);
+  const keyStatusLabel = apiKeyReady
+    ? "Ключ активен"
+    : keyStored
+      ? "Ключ сохранён в файле"
+      : "Ключ не сохранён";
 
   const runStatus = run?.status || "idle";
   const isActive = ["running", "paused"].includes(runStatus);
@@ -505,13 +619,142 @@ function AstraHud() {
 
   const activeStep = plan.find((step) => step.status === "running") || plan[0];
 
+  const settingsPanel = (
+    <aside className={`hud-settings ${isSettingsView || settingsOpen ? "open" : ""} ${isSettingsView ? "settings-window" : ""}`}>
+      <div className="hud-settings-header">
+        <div className="hud-settings-title">
+          <div className="hud-section-title">Настройки Astra</div>
+          <div className="hud-meta">Подключения, разрешения и режим работы</div>
+        </div>
+        <button className="ghost" onClick={closeSettingsWindow}>Закрыть</button>
+      </div>
+
+      {settingsMessage && (
+        <div className={`settings-banner ${settingsMessage.tone}`}>
+          {settingsMessage.text}
+        </div>
+      )}
+
+      <section className="settings-card">
+        <div className="settings-card-title">Подключение</div>
+        <div className="settings-status-row">
+          <div className={`status-dot ${apiKeyReady ? "on" : keyStored ? "warm" : "off"}`} />
+          <div className="hud-meta">{keyStatusLabel}</div>
+          <div className="hud-meta">
+            API: {apiAvailable === null ? "проверка…" : apiAvailable ? "подключен" : "не отвечает"}
+          </div>
+        </div>
+        {apiAvailable === false && (
+          <div className="hud-meta">Запустите локальный API, чтобы активировать ключ.</div>
+        )}
+        <label className="hud-field">
+          <span>Модель</span>
+          <input
+            type="text"
+            placeholder="gpt-4.1-mini"
+            value={modelName}
+            onChange={(e) => setModelName(e.target.value)}
+          />
+        </label>
+        <label className="hud-field">
+          <span>API ключ</span>
+          <input
+            type="password"
+            placeholder={t.onboarding.openaiKeyPlaceholder}
+            value={openaiKey}
+            onChange={(e) => setOpenaiKeyValue(e.target.value)}
+          />
+        </label>
+        <div className="settings-actions">
+          <button className="primary" disabled={savingVault || !openaiKey.trim()} onClick={handleSaveProvider}>
+            {savingVault ? t.onboarding.saving : "Сохранить локально"}
+          </button>
+        </div>
+        <div className="hud-meta">Файл ключа: config/local.secrets.json</div>
+      </section>
+
+      <section className="settings-card">
+        <div className="settings-card-title">Разрешения macOS</div>
+        <div className="settings-perms">
+          <div className="settings-perm">
+            <span>Screen Recording</span>
+            <span className={permissions?.screen_recording ? "perm-on" : "perm-off"}>
+              {permissions?.screen_recording ? "включено" : "не включено"}
+            </span>
+          </div>
+          <div className="settings-perm">
+            <span>Accessibility</span>
+            <span className={permissions?.accessibility ? "perm-on" : "perm-off"}>
+              {permissions?.accessibility ? "включено" : "не включено"}
+            </span>
+          </div>
+        </div>
+        <div className="hud-row">
+          <button onClick={async () => setPermissions(await checkPermissions())}>{t.onboarding.permissionsCheck}</button>
+        </div>
+      </section>
+
+      <button className="settings-advanced-toggle" onClick={() => setAdvancedOpen((prev) => !prev)}>
+        {advancedOpen ? "Скрыть расширенные настройки" : "Расширенные настройки"}
+      </button>
+
+      {advancedOpen && (
+        <div className="settings-advanced">
+          <section className="settings-card">
+            <div className="settings-card-title">Режим работы</div>
+            <select value={mode} onChange={(e) => setMode(e.target.value)}>
+              {MODE_OPTIONS.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </section>
+
+          <section className="settings-card">
+            <div className="settings-card-title">Автопилот</div>
+            <label className="hud-field">
+              <span>Интервал цикла (мс)</span>
+              <input type="number" min={200} max={3000} value={loopDelayMs} onChange={(e) => setLoopDelayMs(Number(e.target.value))} />
+            </label>
+            <label className="hud-field">
+              <span>Действий за цикл</span>
+              <input type="number" min={1} max={10} value={maxActions} onChange={(e) => setMaxActions(Number(e.target.value))} />
+            </label>
+            <label className="hud-field">
+              <span>Лимит циклов</span>
+              <input type="number" min={1} max={120} value={maxCycles} onChange={(e) => setMaxCycles(Number(e.target.value))} />
+            </label>
+          </section>
+
+          {projects.length > 0 && (
+            <section className="settings-card">
+              <div className="settings-card-title">Проект</div>
+              <select value={selectedProject?.id || ""} onChange={(e) => setSelectedProject(projects.find((p) => p.id === e.target.value))}>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+            </section>
+          )}
+        </div>
+      )}
+    </aside>
+  );
+
+  if (isSettingsView) {
+    return (
+      <div className="app settings-only">
+        <div className="settings-shell">{settingsPanel}</div>
+      </div>
+    );
+  }
+
   return (
     <div className={`app hud-app mode-${uiMode} mode-${windowMode} ${settingsOpen ? "settings-open" : ""}`}>
       <div className="hud-shell">
         <div className="hud-top-zone" />
         <header className="hud-header">
           <div className="hud-actions">
-            <button className="icon-button" title="Настройки" onClick={() => setSettingsOpen((prev) => !prev)}>
+            <button className="icon-button" title="Настройки" onClick={openSettingsWindow}>
               ⚙︎
             </button>
             <button className="icon-button" title="Переключить режим" onClick={toggleOverlayMode}>
@@ -528,8 +771,10 @@ function AstraHud() {
         <div className="hud-content">
           {uiMode === "idle" && (
             <section className="hud-idle">
-              <div className="hud-brand">ASTRA</div>
-              <div className="hud-greeting">{t.hud.greeting}</div>
+              <div className="hud-idle-header">
+                <div className="hud-logo">A</div>
+              </div>
+              <div className="hud-greeting">Что нужно сделать?</div>
               <div className="hud-input-row">
                 <input
                   className="hud-input"
@@ -553,6 +798,7 @@ function AstraHud() {
                   ➤
                 </button>
               </div>
+              {status && <div className="hud-message">{status}</div>}
             </section>
           )}
 
@@ -655,78 +901,7 @@ function AstraHud() {
         </div>
       </div>
 
-      <aside className={`hud-settings ${settingsOpen ? "open" : ""}`}>
-        <div className="hud-settings-header">
-          <div className="hud-section-title">Настройки</div>
-          <button className="ghost" onClick={() => setSettingsOpen(false)}>Закрыть</button>
-        </div>
-
-        <div className="hud-settings-section">
-          <div className="hud-section-title">Проект</div>
-          {projects.length > 0 ? (
-            <select value={selectedProject?.id || ""} onChange={(e) => setSelectedProject(projects.find((p) => p.id === e.target.value))}>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>{project.name}</option>
-              ))}
-            </select>
-          ) : (
-            <div className="hud-meta">{t.projects.empty}</div>
-          )}
-        </div>
-
-        <div className="hud-settings-section">
-          <div className="hud-section-title">Режим</div>
-          <select value={mode} onChange={(e) => setMode(e.target.value)}>
-            {MODE_OPTIONS.map((m) => (
-              <option key={m.value} value={m.value}>{m.label}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="hud-settings-section">
-          <div className="hud-section-title">Автопилот</div>
-          <label className="hud-field">
-            <span>Интервал цикла (мс)</span>
-            <input type="number" min={200} max={3000} value={loopDelayMs} onChange={(e) => setLoopDelayMs(Number(e.target.value))} />
-          </label>
-          <label className="hud-field">
-            <span>Действий за цикл</span>
-            <input type="number" min={1} max={10} value={maxActions} onChange={(e) => setMaxActions(Number(e.target.value))} />
-          </label>
-          <label className="hud-field">
-            <span>Лимит циклов</span>
-            <input type="number" min={1} max={120} value={maxCycles} onChange={(e) => setMaxCycles(Number(e.target.value))} />
-          </label>
-        </div>
-
-        <div className="hud-settings-section">
-          <div className="hud-section-title">OpenAI</div>
-          <input
-            type="text"
-            placeholder="Модель (например gpt-4.1-mini)"
-            value={modelName}
-            onChange={(e) => setModelName(e.target.value)}
-          />
-          <input
-            type="password"
-            placeholder={t.onboarding.openaiKeyPlaceholder}
-            value={openaiKey}
-            onChange={(e) => setOpenaiKeyValue(e.target.value)}
-          />
-          <div className="hud-row">
-            <button className="primary" disabled={savingVault} onClick={handleSaveProvider}>
-              {savingVault ? t.onboarding.saving : "Сохранить в Keychain"}
-            </button>
-            <button onClick={handleLoadFromKeychain}>Загрузить из Keychain</button>
-          </div>
-        </div>
-
-        <div className="hud-settings-section">
-          <div className="hud-section-title">Разрешения macOS</div>
-          <div className="hud-meta">{permissions ? permissions.message : t.onboarding.permissionsUnknown}</div>
-          <button onClick={async () => setPermissions(await checkPermissions())}>{t.onboarding.permissionsCheck}</button>
-        </div>
-      </aside>
+      {settingsOpen ? settingsPanel : null}
     </div>
   );
 }

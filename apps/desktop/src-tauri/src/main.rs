@@ -6,33 +6,36 @@ mod autopilot;
 #[cfg(feature = "desktop-skills")]
 mod skills;
 
-use tauri::{GlobalShortcutManager, Manager};
-
-const KEYCHAIN_SERVICE: &str = "randarc-astra";
-const KEYCHAIN_ACCOUNT_API: &str = "astra-api-key";
+use tauri::{GlobalShortcutManager, Manager, WindowBuilder, WindowUrl};
 
 #[tauri::command]
-fn set_api_key(api_key: String) -> Result<(), String> {
-    // EN kept: фиксированные service/account для keychain
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_API).map_err(|e| e.to_string())?;
-    entry.set_password(&api_key).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-fn get_api_key() -> Result<Option<String>, String> {
-    // EN kept: фиксированные service/account для keychain
-    let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT_API).map_err(|e| e.to_string())?;
-    match entry.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(_) => Ok(None),
+fn open_settings_window(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_window("settings") {
+        let _ = win.show();
+        let _ = win.set_focus();
+        return Ok(());
     }
+    WindowBuilder::new(
+        &app,
+        "settings",
+        WindowUrl::App("index.html?view=settings".into()),
+    )
+    .title("Astra • Настройки")
+    .inner_size(980.0, 700.0)
+    .min_inner_size(820.0, 520.0)
+    .resizable(true)
+    .decorations(true)
+    .transparent(true)
+    .always_on_top(false)
+    .build()
+    .map(|_| ())
+    .map_err(|e| e.to_string())
 }
 
 fn main() {
     bridge::start_bridge();
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![set_api_key, get_api_key, check_permissions])
+        .invoke_handler(tauri::generate_handler![open_settings_window, check_permissions])
         .setup(|app| {
             let handle = app.handle();
             let mut shortcut_manager = handle.global_shortcut_manager();

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from apps.api.config import load_settings
 from apps.api.routes import projects, runs, run_events, skills, artifacts, auth, secrets
 from core.run_engine import RunEngine
@@ -11,6 +12,17 @@ def create_app() -> FastAPI:
     settings = load_settings()
 
     app = FastAPI(title="API Randarc-Astra", version="0.1.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "tauri://localhost",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ],
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
 
     store.init(settings.data_dir, settings.base_dir / "memory" / "migrations")
 

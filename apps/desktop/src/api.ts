@@ -1,20 +1,13 @@
 // EN kept: публичные пути API и заголовки HTTP — контракт интеграции
 import { invoke } from "@tauri-apps/api/tauri";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8123/api/v1";
+const DEFAULT_PORT = import.meta.env.VITE_API_PORT || "8055";
+const API_BASE = import.meta.env.VITE_API_BASE || `http://127.0.0.1:${DEFAULT_PORT}/api/v1`;
 const SESSION_KEY = "astra_session_token";
 let sessionToken: string | null = null;
 
 export async function checkPermissions(): Promise<{ screen_recording: boolean; accessibility: boolean; message: string }> {
   return (await invoke("check_permissions")) as { screen_recording: boolean; accessibility: boolean; message: string };
-}
-
-export async function setApiKey(apiKey: string): Promise<void> {
-  await invoke("set_api_key", { apiKey });
-}
-
-export async function getApiKey(): Promise<string | null> {
-  return (await invoke("get_api_key")) as string | null;
 }
 
 function getOrCreateSessionToken(): string {
@@ -44,6 +37,15 @@ export async function initAuth(): Promise<string> {
     throw new Error(text || res.statusText);
   }
   return token;
+}
+
+export async function checkApiStatus(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/auth/status`);
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 function authHeaders() {
@@ -161,6 +163,14 @@ export async function downloadSnapshot(runId: string): Promise<Blob> {
 
 export function storeOpenAIKey(apiKey: string) {
   return api<any>("/secrets/openai", { method: "POST", body: JSON.stringify({ api_key: apiKey }) });
+}
+
+export function storeOpenAIKeyLocal(apiKey: string) {
+  return api<any>("/secrets/openai_local", { method: "POST", body: JSON.stringify({ api_key: apiKey }) });
+}
+
+export function getLocalOpenAIStatus() {
+  return api<{ stored: boolean }>("/secrets/openai_local");
 }
 
 export function apiBase() {

@@ -55,10 +55,36 @@ export ASTRA_API_PORT="$API_PORT"
 
 LOG_DIR=".astra/logs"
 mkdir -p "$LOG_DIR"
+PUBLIC_LOG_LINK="logs"
+
+if [ -e "$PUBLIC_LOG_LINK" ] && [ ! -L "$PUBLIC_LOG_LINK" ]; then
+  rm -rf "$PUBLIC_LOG_LINK"
+fi
+ln -sfn "$LOG_DIR" "$PUBLIC_LOG_LINK"
+
+check_api() {
+  curl -s "http://127.0.0.1:${API_PORT}/api/v1/auth/status" >/dev/null 2>&1
+}
 
 if [ "$MODE" = "background" ]; then
-  python -m uvicorn apps.api.main:app --host 127.0.0.1 --port "$API_PORT" >"$LOG_DIR/api.log" 2>&1 &
-  echo $! > .astra/api.pid
+  if check_api; then
+    echo "API уже запущен на порту $API_PORT"
+  else
+    python -m uvicorn apps.api.main:app --host 127.0.0.1 --port "$API_PORT" >"$LOG_DIR/api.log" 2>&1 &
+    API_PID=$!
+    echo "$API_PID" > .astra/api.pid
+
+    for _ in {1..20}; do
+      if check_api; then
+        break
+      fi
+      sleep 0.2
+    done
+
+    if ! check_api; then
+      echo "API не поднялся. Проверь: $LOG_DIR/api.log" >&2
+    fi
+  fi
 
   source "$HOME/.cargo/env" >/dev/null 2>&1 || true
   nohup npm --prefix apps/desktop run tauri dev >"$LOG_DIR/tauri.log" 2>&1 &
@@ -75,8 +101,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-python -m uvicorn apps.api.main:app --host 127.0.0.1 --port "$API_PORT" >/dev/null 2>&1 &
-API_PID=$!
+if check_api; then
+  echo "API уже запущен на порту $API_PORT"
+else
+  python -m uvicorn apps.api.main:app --host 127.0.0.1 --port "$API_PORT" >"$LOG_DIR/api.log" 2>&1 &
+  API_PID=$!
+
+  for _ in {1..20}; do
+    if check_api; then
+      break
+    fi
+    sleep 0.2
+  done
+
+  if ! check_api; then
+    echo "API не поднялся. Проверь: $LOG_DIR/api.log" >&2
+  fi
+fi
 
 source "$HOME/.cargo/env" >/dev/null 2>&1 || true
 
