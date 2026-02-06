@@ -22,7 +22,7 @@ class StubLLM:
             "actions": [{"type": "wait", "ms": 1}],
             "needs_user": False,
             "ask_confirm": {"required": False, "reason": "", "proposed_effect": ""},
-            "done": True,
+            "done": False,
         }
         return {"choices": [{"message": {"content": json.dumps(payload, ensure_ascii=False)}}]}
 
