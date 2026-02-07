@@ -50,6 +50,10 @@ fn main() {
             let _ = shortcut_manager.register("Cmd+W", move || {
                 let _ = handle_hide.emit_all("overlay_hide_hotkey", {});
             });
+            let handle_quit = app.handle();
+            let _ = shortcut_manager.register("Cmd+Q", move || {
+                handle_quit.exit(0);
+            });
             Ok(())
         })
         .run(tauri::generate_context!())

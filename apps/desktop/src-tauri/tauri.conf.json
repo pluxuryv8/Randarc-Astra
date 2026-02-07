@@ -25,15 +25,15 @@
     },
     "windows": [
       {
-        "title": "Randarc-Astra",
-        "width": 640,
-        "height": 420,
+        "title": "Astra",
+        "width": 520,
+        "height": 360,
         "resizable": true,
         "transparent": true,
-        "decorations": true,
-        "alwaysOnTop": false,
-        "minWidth": 520,
-        "minHeight": 320,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "minWidth": 420,
+        "minHeight": 240,
         "skipTaskbar": false
       }
     ],
