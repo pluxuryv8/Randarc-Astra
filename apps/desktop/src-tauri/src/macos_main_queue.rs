@@ -8,11 +8,18 @@ mod imp {
     use std::mem::MaybeUninit;
     use std::os::raw::c_void;
 
-    type DispatchQueue = *mut c_void;
+    #[repr(C)]
+    struct DispatchObject {
+        _private: [u8; 0],
+    }
 
+    type DispatchQueue = *mut DispatchObject;
+    type DispatchFunction = extern "C" fn(*mut c_void);
+
+    #[cfg_attr(target_os = "macos", link(name = "System", kind = "dylib"))]
     extern "C" {
-        fn dispatch_get_main_queue() -> DispatchQueue;
-        fn dispatch_sync_f(queue: DispatchQueue, context: *mut c_void, work: extern "C" fn(*mut c_void));
+        static _dispatch_main_q: DispatchObject;
+        fn dispatch_sync_f(queue: DispatchQueue, context: *mut c_void, work: DispatchFunction);
     }
 
     extern "C" {
@@ -23,6 +30,11 @@ mod imp {
     fn is_main_thread() -> bool {
         // `pthread_main_np` is macOS-only.
         unsafe { pthread_main_np() != 0 }
+    }
+
+    #[inline]
+    fn main_queue() -> DispatchQueue {
+        unsafe { &_dispatch_main_q as *const _ as DispatchQueue }
     }
 
     pub fn sync<T, F>(f: F) -> std::thread::Result<T>
@@ -61,7 +73,7 @@ mod imp {
         // SAFETY: synchronous dispatch keeps `ctx` alive until `trampoline` completes.
         unsafe {
             dispatch_sync_f(
-                dispatch_get_main_queue(),
+                main_queue(),
                 (&mut ctx as *mut Ctx<F, T>).cast::<c_void>(),
                 trampoline::<F, T>,
             );
