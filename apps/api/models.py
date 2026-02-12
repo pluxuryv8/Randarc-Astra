@@ -45,3 +45,11 @@ class MemoryCreateRequest(BaseModel):
     source: Optional[str] = None
     from_: Optional[str] = Field(default="user_command", alias="from")
     run_id: Optional[str] = None
+
+
+class ReminderCreateRequest(BaseModel):
+    due_at: str
+    text: str
+    delivery: Optional[str] = None
+    run_id: Optional[str] = None
+    source: Optional[str] = None

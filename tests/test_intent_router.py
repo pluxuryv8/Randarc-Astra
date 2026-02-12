@@ -38,3 +38,18 @@ def test_intent_danger_flags():
     assert decision.act_hint is not None
     assert "delete_file" in decision.act_hint.danger_flags
     assert decision.act_hint.suggested_run_mode == "execute_confirm"
+
+
+def test_intent_reminder_rule():
+    router = IntentRouter(brain=DummyBrain())
+    decision = router.decide("в 16:00 напомни купить хлеб")
+    assert decision.intent == INTENT_ACT
+    assert decision.act_hint is not None
+    assert decision.act_hint.target == "TEXT_ONLY"
+
+
+def test_intent_reminder_needs_time():
+    router = IntentRouter(brain=DummyBrain())
+    decision = router.decide("напомни купить хлеб")
+    assert decision.intent == INTENT_ASK
+    assert decision.questions

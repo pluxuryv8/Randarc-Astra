@@ -4,6 +4,7 @@ import type {
   Approval,
   MemorySearchResult,
   UserMemory,
+  Reminder,
   PlanStep,
   Project,
   ProjectSettings,
@@ -180,6 +181,17 @@ export function pinUserMemory(memoryId: string): Promise<UserMemory> {
 
 export function unpinUserMemory(memoryId: string): Promise<UserMemory> {
   return api<UserMemory>(`/memory/${memoryId}/unpin`, { method: "POST" });
+}
+
+export function listReminders(status = "", limit = 200): Promise<Reminder[]> {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  params.set("limit", String(limit));
+  return api<Reminder[]>(`/reminders?${params.toString()}`);
+}
+
+export function cancelReminder(reminderId: string): Promise<Reminder> {
+  return api<Reminder>(`/reminders/${reminderId}`, { method: "DELETE" });
 }
 
 export function listApprovals(runId: string): Promise<Approval[]> {

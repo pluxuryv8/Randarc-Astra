@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/events/reminder_created.schema.json",
+  "title": "reminder_created",
+  "type": "object",
+  "properties": {
+    "id": {"type": "string"},
+    "due_at": {"type": "string"},
+    "delivery": {"type": "string"}
+  },
+  "required": ["id", "due_at", "delivery"],
+  "additionalProperties": false
+}

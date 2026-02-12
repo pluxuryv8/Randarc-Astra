@@ -67,9 +67,28 @@ def _memory_content_limit() -> int:
     return limit
 
 
+def _reminder_row(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "created_at": row["created_at"],
+        "due_at": row["due_at"],
+        "text": row["text"],
+        "status": row["status"],
+        "delivery": row["delivery"],
+        "last_error": row["last_error"],
+        "run_id": row["run_id"],
+        "source": row["source"],
+        "sent_at": row["sent_at"],
+        "updated_at": row["updated_at"],
+        "attempts": row["attempts"],
+    }
+
+
 def _infer_plan_step_kind(skill_name: str | None) -> str:
     if skill_name == "memory_save":
         return "MEMORY_COMMIT"
+    if skill_name == "reminder_create":
+        return "REMINDER_CREATE"
     if skill_name == "autopilot_computer":
         return "COMPUTER_ACTIONS"
     if skill_name == "web_research":
@@ -254,6 +273,143 @@ def list_runs(project_id: str, limit: int = 50) -> list[dict]:
         }
         for row in rows
     ]
+
+
+def create_reminder(
+    due_at: str,
+    text: str,
+    *,
+    delivery: str,
+    status: str = "pending",
+    run_id: str | None = None,
+    source: str | None = None,
+) -> dict:
+    reminder_id = _uuid()
+    created_at = now_iso()
+    updated_at = created_at
+    conn = _conn_or_raise()
+    with _lock:
+        conn.execute(
+            """
+            INSERT INTO reminders (id, created_at, due_at, text, status, delivery, last_error, run_id, source, sent_at, updated_at, attempts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (reminder_id, created_at, due_at, text, status, delivery, None, run_id, source, None, updated_at, 0),
+        )
+        conn.commit()
+    return {
+        "id": reminder_id,
+        "created_at": created_at,
+        "due_at": due_at,
+        "text": text,
+        "status": status,
+        "delivery": delivery,
+        "last_error": None,
+        "run_id": run_id,
+        "source": source,
+        "sent_at": None,
+        "updated_at": updated_at,
+        "attempts": 0,
+    }
+
+
+def list_reminders(status: str | None = None, limit: int = 200) -> list[dict]:
+    conn = _conn_or_raise()
+    limit = max(1, min(limit, 500))
+    if status:
+        rows = conn.execute(
+            "SELECT * FROM reminders WHERE status = ? ORDER BY due_at ASC LIMIT ?",
+            (status, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM reminders ORDER BY due_at DESC LIMIT ?", (limit,)).fetchall()
+    return [_reminder_row(r) for r in rows]
+
+
+def get_reminder(reminder_id: str) -> dict | None:
+    conn = _conn_or_raise()
+    row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+    if not row:
+        return None
+    return _reminder_row(row)
+
+
+def cancel_reminder(reminder_id: str) -> dict | None:
+    conn = _conn_or_raise()
+    updated_at = now_iso()
+    with _lock:
+        row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+        if not row:
+            return None
+        conn.execute(
+            "UPDATE reminders SET status = ?, updated_at = ? WHERE id = ?",
+            ("cancelled", updated_at, reminder_id),
+        )
+        conn.commit()
+    updated = dict(_reminder_row(row))
+    updated["status"] = "cancelled"
+    updated["updated_at"] = updated_at
+    return updated
+
+
+def claim_due_reminders(now_ts: str, limit: int = 20) -> list[dict]:
+    conn = _conn_or_raise()
+    limit = max(1, min(limit, 200))
+    claimed: list[dict] = []
+    with _lock:
+        rows = conn.execute(
+            "SELECT * FROM reminders WHERE status = 'pending' AND due_at <= ? ORDER BY due_at ASC LIMIT ?",
+            (now_ts, limit),
+        ).fetchall()
+        for row in rows:
+            updated_at = now_iso()
+            res = conn.execute(
+                "UPDATE reminders SET status = ?, updated_at = ?, attempts = attempts + 1 WHERE id = ? AND status = 'pending'",
+                ("sending", updated_at, row["id"]),
+            )
+            if res.rowcount == 0:
+                continue
+            conn.commit()
+            data = _reminder_row(row)
+            data["status"] = "sending"
+            data["updated_at"] = updated_at
+            data["attempts"] = (row["attempts"] or 0) + 1
+            claimed.append(data)
+    return claimed
+
+
+def mark_reminder_sent(reminder_id: str, delivery: str) -> dict | None:
+    conn = _conn_or_raise()
+    sent_at = now_iso()
+    with _lock:
+        row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+        if not row:
+            return None
+        conn.execute(
+            "UPDATE reminders SET status = ?, delivery = ?, sent_at = ?, last_error = ?, updated_at = ? WHERE id = ?",
+            ("sent", delivery, sent_at, None, sent_at, reminder_id),
+        )
+        conn.commit()
+    updated = dict(_reminder_row(row))
+    updated.update({"status": "sent", "delivery": delivery, "sent_at": sent_at, "last_error": None, "updated_at": sent_at})
+    return updated
+
+
+def mark_reminder_failed(reminder_id: str, error: str, delivery: str) -> dict | None:
+    conn = _conn_or_raise()
+    updated_at = now_iso()
+    with _lock:
+        row = conn.execute("SELECT * FROM reminders WHERE id = ?", (reminder_id,)).fetchone()
+        if not row:
+            return None
+        conn.execute(
+            "UPDATE reminders SET status = ?, delivery = ?, last_error = ?, updated_at = ? WHERE id = ?",
+            ("failed", delivery, error, updated_at, reminder_id),
+        )
+        conn.commit()
+    updated = dict(_reminder_row(row))
+    updated.update({"status": "failed", "delivery": delivery, "last_error": error, "updated_at": updated_at})
+    return updated
 
 
 def update_run_status(run_id: str, status: str, started_at: Optional[str] = None, finished_at: Optional[str] = None) -> None:

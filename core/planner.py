@@ -10,6 +10,7 @@ from core.brain.router import get_brain
 from core.brain.types import LLMRequest
 from core.intent_router import INTENT_ACT, INTENT_ASK, INTENT_CHAT
 from core.llm_routing import ContextItem
+from core.reminders.parser import parse_reminder_text
 
 KIND_CHAT_RESPONSE = "CHAT_RESPONSE"
 KIND_CLARIFY = "CLARIFY_QUESTION"
@@ -19,6 +20,7 @@ KIND_DOCUMENT_WRITE = "DOCUMENT_WRITE"
 KIND_FILE_ORGANIZE = "FILE_ORGANIZE"
 KIND_CODE_ASSIST = "CODE_ASSIST"
 KIND_MEMORY_COMMIT = "MEMORY_COMMIT"
+KIND_REMINDER_CREATE = "REMINDER_CREATE"
 
 ALL_KINDS = {
     KIND_CHAT_RESPONSE,
@@ -29,6 +31,7 @@ ALL_KINDS = {
     KIND_FILE_ORGANIZE,
     KIND_CODE_ASSIST,
     KIND_MEMORY_COMMIT,
+    KIND_REMINDER_CREATE,
 }
 
 KIND_TO_SKILL = {
@@ -40,6 +43,7 @@ KIND_TO_SKILL = {
     KIND_FILE_ORGANIZE: "autopilot_computer",
     KIND_CODE_ASSIST: "autopilot_computer",
     KIND_MEMORY_COMMIT: "memory_save",
+    KIND_REMINDER_CREATE: "reminder_create",
 }
 
 DANGER_PATTERNS = {
@@ -52,6 +56,7 @@ DANGER_PATTERNS = {
 }
 
 MEMORY_TRIGGERS = ("запомни", "сохрани", "в память", "зафиксируй", "запиши")
+REMINDER_TRIGGERS = ("напомни", "напомнить", "напоминание")
 
 
 @dataclass
@@ -115,6 +120,10 @@ def _needs_memory_commit(text: str) -> bool:
     return _contains_any(_normalize(text), MEMORY_TRIGGERS)
 
 
+def _needs_reminder(text: str) -> bool:
+    return _contains_any(_normalize(text), REMINDER_TRIGGERS)
+
+
 def _extract_memory_payload(text: str) -> dict[str, Any]:
     lowered = text.lower()
     match_pos = None
@@ -136,6 +145,13 @@ def _extract_memory_payload(text: str) -> dict[str, Any]:
     if len(title) > 60:
         title = title[:57] + "..."
     return {"content": content, "title": title, "tags": []}
+
+
+def _extract_reminder_payload(text: str) -> dict[str, Any]:
+    due_at, reminder_text, _ = parse_reminder_text(text)
+    if not due_at or not reminder_text:
+        return {}
+    return {"due_at": due_at, "text": reminder_text}
 
 
 def _step(
@@ -559,6 +575,21 @@ def _llm_plan(text: str) -> list[PlanStep] | None:
 
 
 def _build_steps_from_text(text_norm: str, raw_text: str) -> list[PlanStep]:
+    if _needs_reminder(text_norm):
+        payload = _extract_reminder_payload(raw_text)
+        if payload:
+            steps = [
+                _step(
+                    0,
+                    "Создать напоминание",
+                    KIND_REMINDER_CREATE,
+                    payload,
+                    "Напоминание добавлено",
+                    artifacts_expected=["reminder"],
+                )
+            ]
+            return steps
+
     if any(text_norm.startswith(trigger) for trigger in MEMORY_TRIGGERS):
         steps: list[PlanStep] = []
         return _append_memory_step_if_needed(raw_text, steps)

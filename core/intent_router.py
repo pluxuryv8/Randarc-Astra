@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.brain.router import get_brain
+from core.reminders.parser import parse_reminder_text
 from core.brain.types import LLMRequest, LLMResponse
 from core.llm_routing import ContextItem
 
@@ -160,6 +161,7 @@ _DANGER_PATTERNS = {
 }
 
 _MEMORY_TRIGGERS = ("запомни", "сохрани", "в память", "зафиксируй", "запиши")
+_REMINDER_TRIGGERS = ("напомни", "напомнить", "напоминание")
 
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
@@ -206,6 +208,17 @@ class IntentRouter:
                 intent=INTENT_ACT,
                 confidence=0.82,
                 reasons=["memory_trigger"],
+                act_hint=ActHint(target=TARGET_TEXT_ONLY, danger_flags=[], suggested_run_mode="execute_confirm"),
+            )
+
+        if _contains_any(text, _REMINDER_TRIGGERS):
+            _, _, question = parse_reminder_text(text)
+            if question:
+                return IntentDecision(intent=INTENT_ASK, confidence=0.7, reasons=["reminder_needs_time"], questions=[question])
+            return IntentDecision(
+                intent=INTENT_ACT,
+                confidence=0.84,
+                reasons=["reminder_trigger"],
                 act_hint=ActHint(target=TARGET_TEXT_ONLY, danger_flags=[], suggested_run_mode="execute_confirm"),
             )
 

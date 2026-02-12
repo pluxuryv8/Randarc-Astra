@@ -82,6 +82,22 @@
       "tests": null
     },
     {
+      "name": "reminder_create",
+      "version": "0.1.0",
+      "capabilities": [
+        "reminders",
+        "scheduler"
+      ],
+      "inputs_schema": "schemas/skills/reminder_create.inputs.schema.json",
+      "outputs_schema": "schemas/skill_result.schema.json",
+      "side_effects": [
+        "database_write"
+      ],
+      "providers": [],
+      "scopes": "safe",
+      "tests": null
+    },
+    {
       "name": "autopilot_computer",
       "version": "0.1.0",
       "capabilities": [

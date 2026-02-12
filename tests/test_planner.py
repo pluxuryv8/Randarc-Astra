@@ -55,3 +55,10 @@ def test_planner_memory_commit():
     plan = planner.create_plan_for_run(run)
     kinds = {step["kind"] for step in plan}
     assert "MEMORY_COMMIT" in kinds
+
+
+def test_planner_reminder_create():
+    run = _run("в 16:00 напомни купить хлеб", INTENT_ACT)
+    plan = planner.create_plan_for_run(run)
+    kinds = {step["kind"] for step in plan}
+    assert "REMINDER_CREATE" in kinds

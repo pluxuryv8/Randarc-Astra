@@ -1,10 +1,11 @@
 # UI Guide (Astra Desktop)
 
 ## Layout
-- Sidebar: список runs, поиск, кнопки Memory/Settings. См. `apps/desktop/src/MainApp.tsx`.
+- Sidebar: список runs, поиск, кнопки Memory/Reminders/Settings. См. `apps/desktop/src/MainApp.tsx`.
 - Main: чат, статус агента, поле ввода, быстрые действия. См. `apps/desktop/src/MainApp.tsx`.
 - Inspector: вкладки Steps/Events/Approvals/Metrics (панель справа). См. `apps/desktop/src/MainApp.tsx`.
 - Memory/Settings: панели в правой колонке. См. `apps/desktop/src/ui/MemoryPanel.tsx`, `apps/desktop/src/ui/SettingsPanel.tsx`.
+- Reminders: панель напоминаний `apps/desktop/src/ui/RemindersPanel.tsx`.
 - Overlay (маленькое окно): см. `apps/desktop/src/OverlayApp.tsx` (открывается как `?view=overlay`).
 
 ## Data Flow

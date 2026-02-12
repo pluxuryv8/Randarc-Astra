@@ -205,3 +205,18 @@ export type UserMemory = {
   pinned?: boolean;
   last_used_at?: string | null;
 };
+
+export type Reminder = {
+  id: string;
+  created_at?: string;
+  due_at: string;
+  text: string;
+  status: string;
+  delivery: string;
+  last_error?: string | null;
+  run_id?: string | null;
+  source?: string | null;
+  sent_at?: string | null;
+  updated_at?: string | null;
+  attempts?: number;
+};

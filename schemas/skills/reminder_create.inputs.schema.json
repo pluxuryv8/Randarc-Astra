@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "due_at": {"type": "string"},
+    "text": {"type": "string"},
+    "delivery": {"type": "string"}
+  },
+  "required": ["due_at", "text"]
+}

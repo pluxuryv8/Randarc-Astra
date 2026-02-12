@@ -718,6 +718,50 @@ select {
   color: var(--faint);
 }
 
+.reminder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.reminder-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reminder-card.failed {
+  border-color: rgba(255, 141, 141, 0.4);
+}
+
+.reminder-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.reminder-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.reminder-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.reminder-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
 .banner {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--border);

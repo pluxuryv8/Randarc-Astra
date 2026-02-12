@@ -12,6 +12,8 @@ import {
   startRun,
   cancelRun,
   updateProject,
+  listReminders,
+  cancelReminder,
   getSnapshot,
   initAuth,
   checkApiStatus,
@@ -28,6 +30,7 @@ import {
 } from "./api";
 import SettingsPanel from "./ui/SettingsPanel";
 import MemoryPanel from "./ui/MemoryPanel";
+import RemindersPanel from "./ui/RemindersPanel";
 import { mergeEvents, statusTone } from "./ui/utils";
 import type {
   Approval,
@@ -39,6 +42,7 @@ import type {
   RunIntentResponse,
   SnapshotMetrics,
   Task,
+  Reminder,
   UserMemory
 } from "./types";
 
@@ -79,6 +83,11 @@ const EVENT_TYPES = [
   "run_paused",
   "run_resumed",
   "run_started",
+  "reminder_created",
+  "reminder_due",
+  "reminder_sent",
+  "reminder_failed",
+  "reminder_cancelled",
   "source_fetched",
   "source_found",
   "step_cancelled_by_user",
@@ -144,7 +153,7 @@ type ChatMessage = {
 
 type InspectorTab = "steps" | "events" | "approvals" | "metrics";
 
-type RightPanel = "inspector" | "memory" | "settings" | "closed";
+type RightPanel = "inspector" | "memory" | "reminders" | "settings" | "closed";
 
 function nowId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -212,6 +221,9 @@ export default function MainApp() {
   const [memoryItems, setMemoryItems] = useState<UserMemory[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryError, setMemoryError] = useState<string | null>(null);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [reminderLoading, setReminderLoading] = useState(false);
+  const [reminderError, setReminderError] = useState<string | null>(null);
   const [apiAvailable, setApiAvailable] = useState<boolean | null>(null);
   const [openaiKey, setOpenaiKey] = useState("");
   const [keyStored, setKeyStored] = useState(false);
@@ -672,6 +684,31 @@ export default function MainApp() {
     [refreshMemoryList]
   );
 
+  const refreshReminders = useCallback(async () => {
+    try {
+      setReminderLoading(true);
+      setReminderError(null);
+      const items = await listReminders();
+      setReminders(items);
+    } catch {
+      setReminderError("Не удалось загрузить напоминания");
+    } finally {
+      setReminderLoading(false);
+    }
+  }, []);
+
+  const handleCancelReminder = useCallback(
+    async (reminderId: string) => {
+      try {
+        await cancelReminder(reminderId);
+        await refreshReminders();
+      } catch {
+        setReminderError("Не удалось отменить напоминание");
+      }
+    },
+    [refreshReminders]
+  );
+
   const handleSaveSettings = useCallback(async () => {
     if (!selectedProject) {
       setSettingsMessage({ text: "Проект не найден", tone: "error" });
@@ -836,6 +873,11 @@ export default function MainApp() {
   }, [rightPanel, refreshMemoryList]);
 
   useEffect(() => {
+    if (rightPanel !== "reminders") return;
+    void refreshReminders();
+  }, [rightPanel, refreshReminders]);
+
+  useEffect(() => {
     const handleKeys = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
         if (canSend) {
@@ -953,6 +995,7 @@ export default function MainApp() {
 
         <div className="sidebar-footer">
           <button className="btn ghost" onClick={() => setRightPanel("memory")}>Memory</button>
+          <button className="btn ghost" onClick={() => setRightPanel("reminders")}>Reminders</button>
           <button className="btn ghost" onClick={() => setRightPanel("settings")}>Settings</button>
         </div>
         </aside>
@@ -1048,8 +1091,8 @@ export default function MainApp() {
         </footer>
         </main>
 
-        {rightPanel !== "closed" ? (
-          <aside className="right-panel">
+      {rightPanel !== "closed" ? (
+        <aside className="right-panel">
           {rightPanel === "memory" ? (
             <MemoryPanel
               items={memoryItems}
@@ -1062,7 +1105,16 @@ export default function MainApp() {
               onTogglePin={(id, pinned) => void handleTogglePin(id, pinned)}
               onClose={closeRightPanel}
             />
-              ) : rightPanel === "settings" ? (
+          ) : rightPanel === "reminders" ? (
+            <RemindersPanel
+              items={reminders}
+              loading={reminderLoading}
+              error={reminderError}
+              onRefresh={() => void refreshReminders()}
+              onCancel={(id) => void handleCancelReminder(id)}
+              onClose={closeRightPanel}
+            />
+          ) : rightPanel === "settings" ? (
             <SettingsPanel
               modelName={modelName}
               onModelChange={setModelName}
