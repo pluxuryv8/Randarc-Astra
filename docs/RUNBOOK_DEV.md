@@ -3,9 +3,10 @@
 ## Быстрый старт
 ```bash
 ./scripts/run.sh
-./scripts/doctor.sh
+./scripts/doctor.sh prereq
+./scripts/doctor.sh runtime
 ```
-(см. `scripts/run.sh:1-134`, `scripts/doctor.sh:1-146`)
+(см. `scripts/run.sh:1-134`, `scripts/doctor.sh:1-200`)
 
 Остановка:
 ```bash
@@ -34,13 +35,25 @@ npm --prefix apps/desktop run tauri dev
 
 UI читает API base из `VITE_API_BASE` или `VITE_API_PORT` (по умолчанию 8055) (см. `apps/desktop/src/api.ts:14-16`).
 
+## OCR prerequisites
+- Установить Tesseract:
+```bash
+brew install tesseract
+```
+- Установить Python deps в API окружение (`.venv` создаёт `./scripts/run.sh`):
+```bash
+.venv/bin/python -m pip install -U pip
+.venv/bin/python -m pip install -r apps/api/requirements.txt
+```
+
 ## Как прогнать doctor
 ```bash
-./scripts/doctor.sh
+./scripts/doctor.sh prereq
+./scripts/doctor.sh runtime
 ```
-- Использует `ASTRA_API_PORT`/`ASTRA_API_BASE` при наличии (см. `scripts/doctor.sh:6-8`).
-- Если `ASTRA_SESSION_TOKEN` не задан, пытается создать токен и сохранить в `.astra/doctor.token` (см. `scripts/doctor.sh:49-98`).
-- Делает запросы: `GET /auth/status`, `POST /auth/bootstrap`, `POST /projects`, `POST /projects/{id}/runs`, `GET /runs/{id}/events?once=1` (см. `scripts/doctor.sh:39-134`).
+- `prereq` проверяет зависимости/ключи/ollama без требования запущенных сервисов.
+- `runtime` проверяет поднятые сервисы и health-запросы API.
+- Использует `ASTRA_API_PORT`/`ASTRA_API_BASE` при наличии (см. `scripts/doctor.sh:9-13`).
 
 ## Проверки качества (одна команда)
 ```bash
