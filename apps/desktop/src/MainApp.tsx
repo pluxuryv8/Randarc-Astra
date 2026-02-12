@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/tauri";
+import { appWindow } from "@tauri-apps/api/window";
 import {
   apiBase,
   listProjects,
@@ -897,12 +898,21 @@ export default function MainApp() {
   }, [runSearch, runs]);
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <div>
-            <div className="brand">Astra</div>
-            <div className="brand-sub">{selectedProject?.name || "Проект"}</div>
+    <div className="window-frame">
+      <div className="titlebar">
+        <div className="titlebar-left">Astra</div>
+        <div className="window-controls">
+          <button className="window-btn close" onClick={() => appWindow.close()} aria-label="Close window" />
+          <button className="window-btn minimize" onClick={() => appWindow.minimize()} aria-label="Minimize window" />
+          <button className="window-btn maximize" onClick={() => appWindow.toggleMaximize()} aria-label="Maximize window" />
+        </div>
+      </div>
+      <div className="app-shell">
+        <aside className="sidebar">
+          <div className="sidebar-header">
+            <div>
+              <div className="brand">Astra</div>
+              <div className="brand-sub">{selectedProject?.name || "Проект"}</div>
           </div>
           <div className="badge">v1</div>
         </div>
@@ -945,9 +955,9 @@ export default function MainApp() {
           <button className="btn ghost" onClick={() => setRightPanel("memory")}>Memory</button>
           <button className="btn ghost" onClick={() => setRightPanel("settings")}>Settings</button>
         </div>
-      </aside>
+        </aside>
 
-      <main className="main">
+        <main className="main">
         <header className="main-header">
           <div className="status-stack">
             <div className="status-row">
@@ -1036,10 +1046,10 @@ export default function MainApp() {
           </div>
           <div className="input-hint">Cmd/Ctrl + Enter — отправить</div>
         </footer>
-      </main>
+        </main>
 
-      {rightPanel !== "closed" ? (
-        <aside className="right-panel">
+        {rightPanel !== "closed" ? (
+          <aside className="right-panel">
           {rightPanel === "memory" ? (
             <MemoryPanel
               items={memoryItems}
@@ -1261,8 +1271,9 @@ export default function MainApp() {
               </div>
             </div>
           )}
-        </aside>
-      ) : null}
+          </aside>
+        ) : null}
+      </div>
     </div>
   );
 }
