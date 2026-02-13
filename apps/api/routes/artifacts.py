@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from memory import store
-
 from apps.api.auth import require_auth
+from memory import store
 
 router = APIRouter(prefix="/api/v1", tags=["artifacts"], dependencies=[Depends(require_auth)])
 

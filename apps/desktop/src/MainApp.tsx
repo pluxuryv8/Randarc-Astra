@@ -241,6 +241,7 @@ export default function MainApp() {
   const pollTimerRef = useRef<number | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
+  const openEventStreamRef = useRef<((runId: string) => Promise<void>) | null>(null);
 
   const pendingApprovals = useMemo(() => approvals.filter((a) => a.status === "pending"), [approvals]);
   const visibleApproval = pendingApprovals[0] || null;
@@ -429,7 +430,10 @@ export default function MainApp() {
       const delay = base + jitter;
       reconnectTimerRef.current = window.setTimeout(() => {
         reconnectTimerRef.current = null;
-        void openEventStream(runId);
+        const opener = openEventStreamRef.current;
+        if (opener) {
+          void opener(runId);
+        }
       }, delay);
     },
     []
@@ -516,6 +520,10 @@ export default function MainApp() {
     },
     [cleanupEventStream, handleEvent, queueSnapshotRefresh, scheduleReconnect, startPolling, stopPolling]
   );
+
+  useEffect(() => {
+    openEventStreamRef.current = openEventStream;
+  }, [openEventStream]);
 
   const refreshRuns = useCallback(async (projectId: string) => {
     const data = await listRuns(projectId, RUNS_LIMIT);

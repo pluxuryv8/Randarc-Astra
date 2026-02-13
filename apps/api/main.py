@@ -2,10 +2,21 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from apps.api.config import load_settings
-from apps.api.routes import projects, runs, run_events, skills, artifacts, auth, secrets, memory, reminders
-from core.run_engine import RunEngine
+from apps.api.routes import (
+    artifacts,
+    auth,
+    memory,
+    projects,
+    reminders,
+    run_events,
+    runs,
+    secrets,
+    skills,
+)
 from core.reminders.scheduler import start_reminder_scheduler
+from core.run_engine import RunEngine
 from memory import store
 
 

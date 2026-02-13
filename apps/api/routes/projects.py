@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Depends
-
-from apps.api.models import ProjectCreate, ProjectUpdate
-from memory import store
+from fastapi import APIRouter, Depends, HTTPException
 
 from apps.api.auth import require_auth
+from apps.api.models import ProjectCreate, ProjectUpdate
+from memory import store
 
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"], dependencies=[Depends(require_auth)])
 

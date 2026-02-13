@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-import sys
 
 from fastapi.testclient import TestClient
-from jsonschema import validate, RefResolver
+from jsonschema import RefResolver, validate
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))

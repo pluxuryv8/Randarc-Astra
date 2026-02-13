@@ -5,7 +5,6 @@ import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-
 _REMINDER_TRIGGERS = ("напомни", "напомнить", "напоминание")
 
 

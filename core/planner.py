@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -57,6 +58,12 @@ DANGER_PATTERNS = {
 
 MEMORY_TRIGGERS = ("запомни", "сохрани", "в память", "зафиксируй", "запиши")
 REMINDER_TRIGGERS = ("напомни", "напомнить", "напоминание")
+
+
+def _is_qa_mode(meta: dict | None = None) -> bool:
+    if meta and meta.get("qa_mode"):
+        return True
+    return os.getenv("ASTRA_QA_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -330,6 +337,138 @@ def _plan_vscode_review(text: str) -> list[PlanStep] | None:
     return steps
 
 
+def _plan_code_project(text: str) -> list[PlanStep] | None:
+    if not any(token in text for token in ("vscode", "vs code", "код", "проект", "репозиторий")):
+        return None
+    if not any(token in text for token in ("бот", "проект", "прилож", "сервис", "скрипт")):
+        return None
+
+    steps = []
+    steps.append(
+        _step(
+            0,
+            "Открыть VSCode",
+            KIND_COMPUTER_ACTIONS,
+            _autopilot_inputs("Открой VSCode"),
+            "VSCode открыт и виден стартовый экран",
+        )
+    )
+    steps.append(
+        _step(
+            1,
+            "Создать или открыть рабочий проект",
+            KIND_CODE_ASSIST,
+            _autopilot_inputs("Создай или открой рабочий проект в VSCode"),
+            "Проект открыт и видна структура файлов",
+            depends_on=[0],
+        )
+    )
+    steps.append(
+        _step(
+            2,
+            "Сформировать план структуры проекта",
+            KIND_CODE_ASSIST,
+            _autopilot_inputs("Сформируй структуру файлов и основные модули проекта"),
+            "Определена структура проекта и ключевые файлы",
+            depends_on=[1],
+            artifacts_expected=["project_structure"],
+        )
+    )
+    steps.append(
+        _step(
+            3,
+            "Реализовать основной каркас",
+            KIND_CODE_ASSIST,
+            _autopilot_inputs("Реализуй каркас и основные файлы проекта"),
+            "Каркас проекта создан и файлы на месте",
+            depends_on=[2],
+            artifacts_expected=["source_code"],
+        )
+    )
+    return steps
+
+
+def _plan_obsidian_migrate(text: str) -> list[PlanStep] | None:
+    if "obsidian" not in text and "заметк" not in text:
+        return None
+    if not any(token in text for token in ("перепиш", "структур", "перенес", "организ")):
+        return None
+
+    steps = []
+    steps.append(
+        _step(
+            0,
+            "Открыть Obsidian",
+            KIND_COMPUTER_ACTIONS,
+            _autopilot_inputs("Открой Obsidian"),
+            "Obsidian открыт и виден список заметок",
+        )
+    )
+    steps.append(
+        _step(
+            1,
+            "Создать структуру заметок",
+            KIND_COMPUTER_ACTIONS,
+            _autopilot_inputs("Создай структуру папок и заголовков под новые заметки"),
+            "Структура заметок создана",
+            depends_on=[0],
+        )
+    )
+    steps.append(
+        _step(
+            2,
+            "Перенести и структурировать заметки",
+            KIND_COMPUTER_ACTIONS,
+            _autopilot_inputs("Перенеси заметки и структурируй их по разделам"),
+            "Заметки перенесены и структурированы",
+            depends_on=[1],
+            artifacts_expected=["obsidian_notes"],
+        )
+    )
+    return steps
+
+
+def _plan_browser_research(text: str) -> list[PlanStep] | None:
+    if "найди" not in text and "источ" not in text and "поиск" not in text:
+        return None
+    if not any(token in text for token in ("браузер", "интернет", "гугл", "яндекс", "источ", "google", "yandex")):
+        return None
+
+    steps = []
+    steps.append(
+        _step(
+            0,
+            "Открыть браузер",
+            KIND_BROWSER_RESEARCH,
+            _autopilot_inputs("Открой браузер и подготовься к поиску"),
+            "Открыт браузер и видна строка поиска",
+        )
+    )
+    steps.append(
+        _step(
+            1,
+            "Найти источники",
+            KIND_BROWSER_RESEARCH,
+            _autopilot_inputs("Найди 3 релевантных источника по запросу пользователя"),
+            "Открыты минимум 3 источника",
+            depends_on=[0],
+            artifacts_expected=["sources"],
+        )
+    )
+    steps.append(
+        _step(
+            2,
+            "Сформировать краткую выжимку",
+            KIND_DOCUMENT_WRITE,
+            _autopilot_inputs("Сформируй краткую выжимку по найденным источникам"),
+            "Есть краткое резюме по источникам",
+            depends_on=[1],
+            artifacts_expected=["summary"],
+        )
+    )
+    return steps
+
+
 def _plan_document_write(text: str) -> list[PlanStep] | None:
     if not any(token in text for token in ("доклад", "стать", "эссе", "отчёт", "отчет")):
         return None
@@ -467,6 +606,8 @@ def _add_password_step_if_needed(text: str, steps: list[PlanStep]) -> None:
 
 
 def _llm_plan(text: str) -> list[PlanStep] | None:
+    if _is_qa_mode():
+        return None
     brain = get_brain()
 
     schema = {
@@ -574,7 +715,7 @@ def _llm_plan(text: str) -> list[PlanStep] | None:
     return steps or None
 
 
-def _build_steps_from_text(text_norm: str, raw_text: str) -> list[PlanStep]:
+def _build_steps_from_text(text_norm: str, raw_text: str, *, allow_llm: bool = True) -> list[PlanStep]:
     if _needs_reminder(text_norm):
         payload = _extract_reminder_payload(raw_text)
         if payload:
@@ -598,13 +739,16 @@ def _build_steps_from_text(text_norm: str, raw_text: str) -> list[PlanStep]:
         _plan_playlist(text_norm)
         or _plan_sort_desktop(text_norm)
         or _plan_vscode_review(text_norm)
+        or _plan_code_project(text_norm)
+        or _plan_obsidian_migrate(text_norm)
+        or _plan_browser_research(text_norm)
         or _plan_document_write(text_norm)
     )
     if not plan:
         if len(text_norm.split()) <= 4:
             plan = _plan_generic_act(raw_text)
         else:
-            plan = _llm_plan(raw_text) or _plan_generic_act(raw_text)
+            plan = (_llm_plan(raw_text) if allow_llm else None) or _plan_generic_act(raw_text)
 
     danger_flags = _detect_danger_flags(text_norm)
     _apply_danger_flags(plan, danger_flags)
@@ -676,7 +820,8 @@ def create_plan_for_run(run: dict) -> list[dict]:
         ]
         return [step.to_dict() for step in _append_memory_step_if_needed(query_text, steps)]
 
-    steps = _build_steps_from_text(_normalize(query_text), query_text)
+    qa_mode = _is_qa_mode(meta)
+    steps = _build_steps_from_text(_normalize(query_text), query_text, allow_llm=not qa_mode)
     steps = _append_memory_step_if_needed(query_text, steps)
     if meta.get("needs_clarification") and meta.get("intent_questions"):
         steps = _prepend_clarify_step(steps, list(meta.get("intent_questions") or []))

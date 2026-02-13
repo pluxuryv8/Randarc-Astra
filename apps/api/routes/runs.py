@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from types import SimpleNamespace
 
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 
 from apps.api.auth import require_auth
-from apps.api.models import RunCreate, ApprovalDecisionRequest
+from apps.api.models import ApprovalDecisionRequest, RunCreate
 from core.brain.router import get_brain
 from core.brain.types import LLMRequest
 from core.event_bus import emit
@@ -24,6 +25,13 @@ def _get_engine(request: Request):
     if not engine:
         raise RuntimeError("Движок запусков не инициализирован")
     return engine
+
+
+def _is_qa_request(request: Request) -> bool:
+    header = request.headers.get("X-Astra-QA-Mode", "").strip().lower()
+    if header in {"1", "true", "yes", "on"}:
+        return True
+    return os.getenv("ASTRA_QA_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _build_snapshot(run_id: str) -> dict:
@@ -89,7 +97,8 @@ def create_run(project_id: str, payload: RunCreate, request: Request):
     if payload.mode not in allowed_modes:
         raise HTTPException(status_code=400, detail="Недопустимый режим запуска")
 
-    router = IntentRouter()
+    qa_mode = _is_qa_request(request)
+    router = IntentRouter(qa_mode=qa_mode)
     decision = router.decide(payload.query_text)
 
     meta = {
@@ -98,6 +107,7 @@ def create_run(project_id: str, payload: RunCreate, request: Request):
         "intent_reasons": decision.reasons,
         "intent_questions": decision.questions,
         "needs_clarification": decision.needs_clarification,
+        "qa_mode": qa_mode,
         "act_hint": decision.act_hint.to_dict() if decision.act_hint else None,
         "danger_flags": decision.act_hint.danger_flags if decision.act_hint else [],
         "suggested_run_mode": decision.act_hint.suggested_run_mode if decision.act_hint else None,

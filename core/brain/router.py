@@ -10,6 +10,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from core.brain.providers import CloudLLMProvider, LocalLLMProvider, ProviderError
+from core.brain.types import LLMRequest, LLMResponse
 from core.event_bus import emit
 from core.llm_routing import (
     ROUTE_CLOUD,
@@ -21,8 +23,6 @@ from core.llm_routing import (
     sanitize_context_items,
 )
 from core.secrets import get_secret
-from core.brain.providers import CloudLLMProvider, LocalLLMProvider, ProviderError
-from core.brain.types import LLMRequest, LLMResponse
 
 
 @dataclass
@@ -57,13 +57,18 @@ class BrainConfig:
             except ValueError:
                 return default
 
+        api_key = os.getenv("OPENAI_API_KEY") or get_secret("OPENAI_API_KEY")
+        cloud_enabled = _env_bool("ASTRA_CLOUD_ENABLED", True)
+        if not api_key:
+            cloud_enabled = False
+
         return cls(
             local_base_url=os.getenv("ASTRA_LLM_LOCAL_BASE_URL", "http://127.0.0.1:11434"),
             local_chat_model=os.getenv("ASTRA_LLM_LOCAL_CHAT_MODEL", "qwen2.5:3b-instruct"),
             local_code_model=os.getenv("ASTRA_LLM_LOCAL_CODE_MODEL", "qwen2.5-coder:3b"),
             cloud_base_url=os.getenv("ASTRA_LLM_CLOUD_BASE_URL", "https://api.openai.com/v1"),
             cloud_model=os.getenv("ASTRA_LLM_CLOUD_MODEL", "gpt-4.1"),
-            cloud_enabled=_env_bool("ASTRA_CLOUD_ENABLED", True),
+            cloud_enabled=cloud_enabled,
             auto_cloud_enabled=_env_bool("ASTRA_AUTO_CLOUD_ENABLED", True),
             max_concurrency=_env_int("ASTRA_LLM_MAX_CONCURRENCY", 1) or 1,
             max_retries=_env_int("ASTRA_LLM_MAX_RETRIES", 3) or 0,
@@ -110,6 +115,55 @@ class BrainRouter:
         run_id = request.run_id or (ctx.run.get("id") if ctx else None)
         task_id = request.task_id or (ctx.task.get("id") if ctx else None)
         step_id = request.step_id or (ctx.plan_step.get("id") if ctx else None)
+
+        if self._is_qa_mode(ctx):
+            model_id = "qa_stub"
+            self._emit(
+                run_id,
+                "llm_route_decided",
+                "LLM route decided",
+                {
+                    "route": ROUTE_LOCAL,
+                    "reason": "qa_mode",
+                    "provider": "local",
+                    "model_id": model_id,
+                    "items_summary_by_source_type": self._items_summary_by_source(request.context_items or []),
+                },
+                task_id=task_id,
+                step_id=step_id,
+            )
+            self._emit(
+                run_id,
+                "llm_request_started",
+                "LLM request started",
+                {"provider": "local", "model_id": model_id},
+                task_id=task_id,
+                step_id=step_id,
+            )
+            response = LLMResponse(
+                text=self._qa_response(request),
+                usage=None,
+                provider="local",
+                model_id=model_id,
+                latency_ms=0,
+                cache_hit=True,
+                route_reason="qa_mode",
+            )
+            self._emit(
+                run_id,
+                "llm_request_succeeded",
+                "LLM request succeeded",
+                {
+                    "provider": response.provider,
+                    "model_id": response.model_id,
+                    "latency_ms": response.latency_ms,
+                    "usage_if_available": response.usage,
+                    "cache_hit": True,
+                },
+                task_id=task_id,
+                step_id=step_id,
+            )
+            return response
 
         policy_flags = PolicyFlags.from_settings(ctx.settings if ctx else {})
         if os.getenv("ASTRA_CLOUD_ENABLED") is not None:
@@ -535,6 +589,22 @@ class BrainRouter:
         if not run_id:
             return
         emit(run_id, event_type, message, payload, task_id=task_id, step_id=step_id)
+
+    def _is_qa_mode(self, ctx) -> bool:
+        raw = os.getenv("ASTRA_QA_MODE")
+        if raw and raw.strip().lower() in {"1", "true", "yes", "on"}:
+            return True
+        if ctx and getattr(ctx, "run", None):
+            meta = ctx.run.get("meta") or {}
+            return bool(meta.get("qa_mode"))
+        return False
+
+    def _qa_response(self, request: LLMRequest) -> str:
+        if request.json_schema:
+            return "{\"qa_mode\": true}"
+        if request.messages:
+            return "QA mode: response stub."
+        return "QA mode"
 
 
 _BRAIN_SINGLETON: BrainRouter | None = None

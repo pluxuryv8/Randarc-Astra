@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.executor.success_criteria import parse_success_criteria, evaluate_success_checks
+from core.executor.success_criteria import evaluate_success_checks, parse_success_criteria
 from core.ocr.engine import OCRCache, OCRResult
 
 

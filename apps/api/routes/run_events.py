@@ -4,10 +4,10 @@ import asyncio
 import json
 
 from fastapi import APIRouter, HTTPException, Request
-from starlette.responses import StreamingResponse, Response
+from starlette.responses import Response, StreamingResponse
 
-from memory import store
 from apps.api.auth import require_auth
+from memory import store
 
 router = APIRouter(prefix="/api/v1", tags=["events"])
 

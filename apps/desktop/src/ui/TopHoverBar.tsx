@@ -28,6 +28,7 @@ export default function TopHoverBar({
   isCompact,
   onStop,
   onOpenSettings,
+  onOpenMemory,
   stopEnabled,
   streamState
 }: TopHoverBarProps) {

@@ -8,17 +8,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core.brain import LLMRequest, get_brain
 from core.bridge.desktop_bridge import DesktopBridge
 from core.event_bus import emit
-from core.brain import LLMRequest, get_brain
 from core.llm_routing import ContextItem
-from core.skills.result_types import ArtifactCandidate, FactCandidate, SkillResult
 from core.safety.approvals import (
     approval_type_from_flags,
     build_preview_for_step,
     preview_summary,
     proposed_actions_from_preview,
 )
+from core.skills.result_types import ArtifactCandidate, FactCandidate, SkillResult
 from memory import store
 
 ALLOWED_ACTIONS = {

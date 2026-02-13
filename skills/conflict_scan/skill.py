@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections import defaultdict
 import re
+from collections import defaultdict
 
 from core.skills.result_types import SkillResult
 from memory import store

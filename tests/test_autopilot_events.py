@@ -4,10 +4,8 @@ import json
 import os
 from pathlib import Path
 
-import pytest
-
-from core.run_engine import RunEngine
 from core.executor.computer_executor import ExecutorConfig
+from core.run_engine import RunEngine
 from memory import store
 
 ROOT = Path(__file__).resolve().parents[1]

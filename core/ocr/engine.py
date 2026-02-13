@@ -4,7 +4,6 @@ import shutil
 import time
 from dataclasses import dataclass, field
 from io import BytesIO
-from typing import Any
 
 
 @dataclass

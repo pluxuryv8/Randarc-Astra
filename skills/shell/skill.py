@@ -17,7 +17,7 @@ def build_approval(inputs: dict, ctx) -> dict:
 def run(inputs: dict, ctx) -> SkillResult:
     command = inputs.get("command") or ""
     bridge = DesktopBridge()
-    result = bridge.shell_execute(command)
+    _ = bridge.shell_execute(command)
     return SkillResult(
         what_i_did="Выполнена команда оболочки через десктоп-мост.",
         events=[{"message": "команда выполнена", "progress": {"current": 1, "total": 1, "unit": "команда"}}],

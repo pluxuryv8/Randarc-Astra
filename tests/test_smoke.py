@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import tempfile
 import threading
 import time
-import tempfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-import sys
 
 from fastapi.testclient import TestClient
 

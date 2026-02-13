@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any
 
 from jsonschema import validate
-from jsonschema.exceptions import ValidationError
 
 
 def load_schema(schema_path: str, base_dir: Path) -> dict[str, Any]:

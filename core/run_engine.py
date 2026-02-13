@@ -7,8 +7,8 @@ from core import planner
 from core.event_bus import emit
 from core.executor.computer_executor import COMPUTER_STEP_KINDS, ComputerExecutor
 from core.skills.registry import SkillRegistry
-from core.skills.runner import SkillRunner
 from core.skills.result_types import SkillResult
+from core.skills.runner import SkillRunner
 from memory import store
 from memory.db import now_iso
 

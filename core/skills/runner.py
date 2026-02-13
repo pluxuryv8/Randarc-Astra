@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Optional
 
 from core.event_bus import emit
-from core.skill_context import SkillContext
-from core.skills.registry import SkillRegistry
-from core.skills.schemas import load_schema, validate_inputs
-from core.skills.result_types import SkillResult
 from core.safety.approvals import (
     approval_type_from_flags,
     build_preview_for_step,
     preview_summary,
     proposed_actions_from_preview,
 )
+from core.skill_context import SkillContext
+from core.skills.registry import SkillRegistry
+from core.skills.result_types import SkillResult
+from core.skills.schemas import load_schema, validate_inputs
 from memory import store
 
 

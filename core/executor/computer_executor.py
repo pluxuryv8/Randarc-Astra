@@ -23,7 +23,6 @@ from core.safety.approvals import (
 )
 from memory import store
 
-
 COMPUTER_STEP_KINDS = {
     "BROWSER_RESEARCH_UI",
     "COMPUTER_ACTIONS",

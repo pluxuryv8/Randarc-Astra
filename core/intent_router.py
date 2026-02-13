@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from core.brain.router import get_brain
-from core.reminders.parser import parse_reminder_text
 from core.brain.types import LLMRequest, LLMResponse
 from core.llm_routing import ContextItem
+from core.reminders.parser import parse_reminder_text
 
 INTENT_CHAT = "CHAT"
 INTENT_ACT = "ACT"
@@ -220,10 +221,13 @@ def _tokenize(text: str) -> list[str]:
 
 
 class IntentRouter:
-    def __init__(self, *, brain=None, rule_confidence: float = 0.75, llm_confidence: float = 0.6) -> None:
+    def __init__(self, *, brain=None, rule_confidence: float = 0.75, llm_confidence: float = 0.6, qa_mode: bool | None = None) -> None:
         self.brain = brain or get_brain()
         self.rule_confidence = rule_confidence
         self.llm_confidence = llm_confidence
+        if qa_mode is None:
+            qa_mode = os.getenv("ASTRA_QA_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+        self.qa_mode = qa_mode
 
     def decide(self, text: str) -> IntentDecision:
         normalized = _normalize(text)
@@ -235,6 +239,9 @@ class IntentRouter:
             return decision
         if decision and decision.intent in {INTENT_ACT, INTENT_CHAT}:
             return decision
+
+        if self.qa_mode:
+            return decision or self._build_clarify(["qa_mode"])
 
         llm_decision = self._llm_classify(normalized)
         if llm_decision and llm_decision.confidence >= self.llm_confidence:

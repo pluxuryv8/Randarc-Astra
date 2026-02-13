@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.intent_router import INTENT_ACT, INTENT_ASK, INTENT_CHAT, IntentRouter
+from core.intent_router import INTENT_ACT, INTENT_CHAT, IntentRouter
 
 
 class DummyBrain:

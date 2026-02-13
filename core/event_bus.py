@@ -5,7 +5,6 @@ from typing import Optional
 
 from memory import store
 
-
 _DEFAULT_EVENT_TYPES = {
     "run_created",
     "plan_created",

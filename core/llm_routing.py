@@ -8,7 +8,11 @@ from typing import Any, Iterable
 from urllib.parse import urlparse
 
 from core.event_bus import emit
-from core.safety.approvals import build_cloud_financial_preview, preview_summary, proposed_actions_from_preview
+from core.safety.approvals import (
+    build_cloud_financial_preview,
+    preview_summary,
+    proposed_actions_from_preview,
+)
 from memory import store
 
 SOURCE_TYPES = {

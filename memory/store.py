@@ -7,7 +7,7 @@ import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
 
 from .db import ensure_db, now_iso
 

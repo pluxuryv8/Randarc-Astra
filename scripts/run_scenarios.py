@@ -306,6 +306,8 @@ def main() -> int:
             return 1
 
         headers = _auth_headers(token)
+        if args.mode == "dry-run":
+            headers["X-Astra-QA-Mode"] = "1"
         project = _ensure_project(client, headers)
         project_id = project.get("id")
 

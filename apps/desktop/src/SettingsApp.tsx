@@ -22,7 +22,7 @@ const MODE_OPTIONS = [
 const RUN_MODE_KEY = "astra_run_mode";
 
 export default function SettingsApp() {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [modelName, setModelName] = useState("gpt-4.1");
   const [openaiKey, setOpenaiKey] = useState("");

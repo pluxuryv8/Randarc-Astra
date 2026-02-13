@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import threading
 import time
-
 from types import SimpleNamespace
 
 from core.brain.providers import ProviderError, ProviderResult

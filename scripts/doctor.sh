@@ -130,7 +130,7 @@ PY
     if [ -n "${OPENAI_API_KEY-}" ]; then
       ok "OPENAI_API_KEY is set"
     else
-      fail "OPENAI_API_KEY is not set (cloud enabled)"
+      warn "OPENAI_API_KEY is not set (cloud enabled). Set key or disable cloud: ASTRA_CLOUD_ENABLED=false"
     fi
   fi
 

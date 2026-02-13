@@ -10,6 +10,7 @@ from core.llm_routing import ContextItem
 from core.skills.result_types import FactCandidate, SkillResult
 from memory import store
 
+
 def _load_system_prompt(base_dir: str) -> str:
     prompt_path = Path(base_dir) / "prompts" / "extract_facts_system.txt"
     try:
