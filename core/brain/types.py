@@ -16,6 +16,8 @@ class LLMRequest:
     preferred_model_kind: str = "chat"
     max_tokens: int | None = None
     temperature: float = 0.2
+    top_p: float | None = None
+    repeat_penalty: float | None = None
     json_schema: dict | None = None
     tools: list[dict] | None = None
     run_id: str | None = None

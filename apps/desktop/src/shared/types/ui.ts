@@ -15,6 +15,9 @@ export type Message = {
   text: string;
   ts: string;
   run_id?: string;
+  delivery_state?: "queued" | "sending" | "delivered" | "failed";
+  error_detail?: string | null;
+  typing?: boolean;
 };
 
 export type ActivityStepStatus = "pending" | "active" | "done" | "error";

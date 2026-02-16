@@ -10,4 +10,4 @@
 - `SECURITY.md` — текущая модель auth/secrets/bridge risks.
 - `DEVELOPMENT.md` — dev workflow и команды.
 
-Исторические/аудиторские материалы перенесены в `../archive/docs_legacy/`.
+Исторические/аудиторские материалы вынесены в `../archive/`.

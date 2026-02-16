@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import threading
 import time
 from collections import deque
@@ -29,8 +30,14 @@ from core.secrets import get_secret
 class BrainConfig:
     local_base_url: str
     local_chat_model: str
+    local_chat_fast_model: str | None
+    local_chat_complex_model: str | None
     local_code_model: str
     local_timeout_s: int
+    local_fast_query_max_chars: int
+    local_fast_query_max_words: int
+    local_complex_query_min_chars: int
+    local_complex_query_min_words: int
     cloud_base_url: str
     cloud_model: str
     cloud_enabled: bool
@@ -58,6 +65,13 @@ class BrainConfig:
             except ValueError:
                 return default
 
+        def _env_str(name: str, default: str | None = None) -> str | None:
+            raw = os.getenv(name)
+            if raw is None:
+                return default
+            value = raw.strip()
+            return value or default
+
         api_key = os.getenv("OPENAI_API_KEY") or get_secret("OPENAI_API_KEY")
         cloud_enabled = _env_bool("ASTRA_CLOUD_ENABLED", False)
         if not api_key:
@@ -65,9 +79,18 @@ class BrainConfig:
 
         return cls(
             local_base_url=os.getenv("ASTRA_LLM_LOCAL_BASE_URL", "http://127.0.0.1:11434"),
-            local_chat_model=os.getenv("ASTRA_LLM_LOCAL_CHAT_MODEL", "saiga-nemo-12b"),
+            local_chat_model=os.getenv("ASTRA_LLM_LOCAL_CHAT_MODEL", "qwen2.5:7b-instruct"),
+            local_chat_fast_model=_env_str("ASTRA_LLM_LOCAL_CHAT_MODEL_FAST", "qwen2.5:3b-instruct"),
+            local_chat_complex_model=_env_str(
+                "ASTRA_LLM_LOCAL_CHAT_MODEL_COMPLEX",
+                os.getenv("ASTRA_LLM_LOCAL_CHAT_MODEL", "qwen2.5:7b-instruct"),
+            ),
             local_code_model=os.getenv("ASTRA_LLM_LOCAL_CODE_MODEL", "deepseek-coder-v2:16b-lite-instruct-q8_0"),
             local_timeout_s=max(1, _env_int("ASTRA_LLM_LOCAL_TIMEOUT_S", 30) or 30),
+            local_fast_query_max_chars=max(20, _env_int("ASTRA_LLM_FAST_QUERY_MAX_CHARS", 120) or 120),
+            local_fast_query_max_words=max(3, _env_int("ASTRA_LLM_FAST_QUERY_MAX_WORDS", 18) or 18),
+            local_complex_query_min_chars=max(40, _env_int("ASTRA_LLM_COMPLEX_QUERY_MIN_CHARS", 260) or 260),
+            local_complex_query_min_words=max(8, _env_int("ASTRA_LLM_COMPLEX_QUERY_MIN_WORDS", 45) or 45),
             cloud_base_url=os.getenv("ASTRA_LLM_CLOUD_BASE_URL", "https://api.openai.com/v1"),
             cloud_model=os.getenv("ASTRA_LLM_CLOUD_MODEL", "gpt-4.1"),
             cloud_enabled=cloud_enabled,
@@ -203,7 +226,7 @@ class BrainRouter:
             route_reason = decision.reason
 
         provider_name = "local" if route == ROUTE_LOCAL else "cloud"
-        model_id = self._select_model(route, request.preferred_model_kind, ctx)
+        model_id = self._select_model(route, request, ctx)
 
         sanitize_result = None
         final_items = context_items
@@ -230,7 +253,7 @@ class BrainRouter:
                 route = ROUTE_LOCAL
                 route_reason = "sanitized_empty_fallback"
                 provider_name = "local"
-                model_id = self._select_model(route, request.preferred_model_kind, ctx)
+                model_id = self._select_model(route, request, ctx)
 
         items_summary = self._items_summary_by_source(context_items)
         self._emit(
@@ -322,7 +345,7 @@ class BrainRouter:
                     text=result.text,
                     usage=result.usage,
                     provider="local",
-                    model_id=model_id,
+                    model_id=result.model_id or model_id,
                     latency_ms=int((time.time() - start) * 1000),
                     cache_hit=False,
                     route_reason=route_reason,
@@ -392,17 +415,43 @@ class BrainRouter:
             self.config.local_code_model,
             timeout_s=self.config.local_timeout_s,
         )
-        return provider.chat(
-            messages,
-            model_kind=request.preferred_model_kind,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            json_schema=request.json_schema,
-            tools=request.tools,
-            run_id=request.run_id,
-            step_id=request.step_id,
-            purpose=request.purpose,
-        )
+        try:
+            return provider.chat(
+                messages,
+                model=model_id,
+                model_kind=request.preferred_model_kind,
+                temperature=request.temperature,
+                top_p=request.top_p,
+                repeat_penalty=request.repeat_penalty,
+                max_tokens=request.max_tokens,
+                json_schema=request.json_schema,
+                tools=request.tools,
+                run_id=request.run_id,
+                step_id=request.step_id,
+                purpose=request.purpose,
+            )
+        except ProviderError as exc:
+            # Tiered chat model can be absent locally; fall back to base chat model.
+            if (
+                request.preferred_model_kind == "chat"
+                and model_id != self.config.local_chat_model
+                and exc.error_type == "model_not_found"
+            ):
+                return provider.chat(
+                    messages,
+                    model=self.config.local_chat_model,
+                    model_kind=request.preferred_model_kind,
+                    temperature=request.temperature,
+                    top_p=request.top_p,
+                    repeat_penalty=request.repeat_penalty,
+                    max_tokens=request.max_tokens,
+                    json_schema=request.json_schema,
+                    tools=request.tools,
+                    run_id=request.run_id,
+                    step_id=request.step_id,
+                    purpose=request.purpose,
+                )
+            raise
 
     def _call_cloud_with_retry(self, messages: list[dict[str, Any]], request: LLMRequest, model_id: str, start: float) -> LLMResponse:
         api_key = get_secret("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -487,9 +536,11 @@ class BrainRouter:
             return request.messages
         raise ValueError("LLMRequest requires messages or render_messages")
 
-    def _select_model(self, route: str, kind: str, ctx) -> str:
+    def _select_model(self, route: str, request: LLMRequest, ctx) -> str:
         if route == ROUTE_LOCAL:
-            return self.config.local_code_model if kind == "code" else self.config.local_chat_model
+            if request.preferred_model_kind == "code":
+                return self.config.local_code_model
+            return self._select_local_chat_model(request)
 
         if ctx and ctx.settings:
             cloud_cfg = ctx.settings.get("llm_cloud") or ctx.settings.get("llm") or {}
@@ -498,6 +549,72 @@ class BrainRouter:
             if cloud_cfg.get("provider") == "openai" and cloud_cfg.get("base_url"):
                 self.config.cloud_base_url = cloud_cfg.get("base_url")
         return self.config.cloud_model
+
+    def _select_local_chat_model(self, request: LLMRequest) -> str:
+        base_model = self.config.local_chat_model
+        if request.preferred_model_kind != "chat":
+            return base_model
+        if request.purpose != "chat_response":
+            return base_model
+
+        query = self._last_user_message(request.messages)
+        if not query:
+            return base_model
+
+        if self._is_fast_chat_query(query):
+            return self.config.local_chat_fast_model or base_model
+        if self._is_complex_chat_query(query):
+            return self.config.local_chat_complex_model or base_model
+        return base_model
+
+    def _last_user_message(self, messages: list[dict[str, Any]] | None) -> str:
+        if not messages:
+            return ""
+        for message in reversed(messages):
+            if str(message.get("role", "")).strip().lower() != "user":
+                continue
+            content = message.get("content", "")
+            if isinstance(content, str):
+                return content.strip()
+            try:
+                return json.dumps(content, ensure_ascii=False)
+            except Exception:
+                return str(content)
+        return ""
+
+    def _is_fast_chat_query(self, query: str) -> bool:
+        normalized = query.strip()
+        if not normalized:
+            return False
+        words = [word for word in re.split(r"\s+", normalized) if word]
+        lowered = normalized.lower()
+
+        if len(normalized) > self.config.local_fast_query_max_chars:
+            return False
+        if len(words) > self.config.local_fast_query_max_words:
+            return False
+        if "\n" in normalized or "```" in normalized:
+            return False
+        if re.search(r"\b(код|code|python|javascript|sql|regex|архитект|пошаг|подроб|сравни|анализ)\b", lowered):
+            return False
+        return True
+
+    def _is_complex_chat_query(self, query: str) -> bool:
+        normalized = query.strip()
+        if not normalized:
+            return False
+        words = [word for word in re.split(r"\s+", normalized) if word]
+        lowered = normalized.lower()
+
+        if len(normalized) >= self.config.local_complex_query_min_chars:
+            return True
+        if len(words) >= self.config.local_complex_query_min_words:
+            return True
+        if "```" in normalized:
+            return True
+        if re.search(r"\b(архитект|план|сравни|объясни|деталь|подроб|анализ|формул|доказ|рефактор)\b", lowered):
+            return True
+        return False
 
     def _auto_switch_reason(self, request: LLMRequest, items: list[ContextItem], run_id: str | None, flags: PolicyFlags) -> str | None:
         if not flags.auto_cloud_enabled or not flags.cloud_allowed:
@@ -540,6 +657,8 @@ class BrainRouter:
             "route": route,
             "model": model_id,
             "temperature": request.temperature,
+            "top_p": request.top_p,
+            "repeat_penalty": request.repeat_penalty,
             "max_tokens": request.max_tokens,
             "messages": messages,
             "json_schema": request.json_schema,

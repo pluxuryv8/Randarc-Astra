@@ -13,6 +13,7 @@ if ! apply_resolved_address_env; then
 fi
 
 API_PORT="$ASTRA_API_PORT"
+BRIDGE_PORT="$ASTRA_BRIDGE_PORT"
 
 if [ -f .astra/api.pid ]; then
   kill "$(cat .astra/api.pid)" >/dev/null 2>&1 || true
@@ -34,6 +35,12 @@ pids=$(lsof -nP -iTCP:5173 -sTCP:LISTEN -t 2>/dev/null || true)
 if [ -n "$pids" ]; then
   kill $pids >/dev/null 2>&1 || true
   echo "Остановлен Vite (порт 5173)"
+fi
+
+pids=$(lsof -nP -iTCP:"$BRIDGE_PORT" -sTCP:LISTEN -t 2>/dev/null || true)
+if [ -n "$pids" ]; then
+  kill $pids >/dev/null 2>&1 || true
+  echo "Остановлен Bridge (порт $BRIDGE_PORT)"
 fi
 
 pids=$(pgrep -f "tauri dev" || true)

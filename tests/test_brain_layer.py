@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from core.brain.providers import ProviderError, ProviderResult
 from core.brain.router import BrainConfig, BrainRouter
 from core.brain.types import LLMRequest
+from core.llm_routing import ROUTE_LOCAL
 from core.llm_routing import ContextItem, PolicyFlags, sanitize_context_items
 
 
@@ -166,3 +167,67 @@ def test_financial_file_requires_approval(monkeypatch):
 
     assert approval_called["called"] is True
     assert response.provider == "local"
+
+
+def test_select_model_uses_fast_and_complex_qwen_for_chat():
+    cfg = BrainConfig.from_env()
+    cfg.local_chat_model = "qwen2.5:7b-instruct"
+    cfg.local_chat_fast_model = "qwen2.5:3b-instruct"
+    cfg.local_chat_complex_model = "qwen2.5:14b-instruct"
+    router = BrainRouter(cfg)
+
+    simple = LLMRequest(
+        purpose="chat_response",
+        task_kind="chat",
+        messages=[{"role": "user", "content": "2+2?"}],
+        context_items=[ContextItem(content="2+2?", source_type="user_prompt", sensitivity="personal")],
+    )
+    complex_query = LLMRequest(
+        purpose="chat_response",
+        task_kind="chat",
+        messages=[{"role": "user", "content": "Сравни три архитектурных подхода и дай подробный план миграции по шагам."}],
+        context_items=[ContextItem(content="compare", source_type="user_prompt", sensitivity="personal")],
+    )
+
+    assert router._select_model(ROUTE_LOCAL, simple, _dummy_ctx()) == "qwen2.5:3b-instruct"
+    assert router._select_model(ROUTE_LOCAL, complex_query, _dummy_ctx()) == "qwen2.5:14b-instruct"
+
+
+def test_local_tier_model_falls_back_to_base_when_missing(monkeypatch):
+    monkeypatch.setattr("core.brain.router.emit", lambda *args, **kwargs: None)
+
+    cfg = BrainConfig.from_env()
+    cfg.local_chat_model = "qwen2.5:7b-instruct"
+    cfg.local_chat_fast_model = "qwen2.5:3b-instruct"
+    cfg.local_chat_complex_model = "qwen2.5:14b-instruct"
+    router = BrainRouter(cfg)
+
+    calls: list[str] = []
+
+    class StubLocalProvider:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def chat(self, messages, *, model=None, model_kind="chat", **_kwargs):
+            calls.append(model or "")
+            if model == "qwen2.5:3b-instruct":
+                raise ProviderError("missing model", provider="local", error_type="model_not_found")
+            return ProviderResult(text="ok", usage=None, raw={"messages": messages}, model_id=model)
+
+    monkeypatch.setattr("core.brain.router.LocalLLMProvider", StubLocalProvider)
+
+    request = LLMRequest(
+        purpose="chat_response",
+        task_kind="chat",
+        messages=[{"role": "user", "content": "2+2?"}],
+        context_items=[ContextItem(content="2+2?", source_type="user_prompt", sensitivity="personal")],
+        run_id="run-1",
+        task_id="task-1",
+        step_id="step-1",
+    )
+
+    response = router.call(request, _dummy_ctx())
+
+    assert response.text == "ok"
+    assert response.model_id == "qwen2.5:7b-instruct"
+    assert calls == ["qwen2.5:3b-instruct", "qwen2.5:7b-instruct"]

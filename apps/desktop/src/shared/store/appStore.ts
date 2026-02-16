@@ -10,7 +10,7 @@ import type {
   OverlayBehavior,
   OverlayCorner
 } from "../types/ui";
-import type { Approval, EventItem, PlanStep, Project, Reminder, Run, Snapshot, UserMemory } from "../types/api";
+import type { Approval, EventItem, PlanStep, Project, Reminder, Run, RunIntentResponse, Snapshot, UserMemory } from "../types/api";
 import {
   cancelRun,
   cancelReminder,
@@ -72,6 +72,15 @@ const CONVERSATION_LIMIT = 200;
 const NOTIFICATION_TTL_MS = 6000;
 const NOTIFICATION_TTL_WARNING_MS = 10000;
 const NOTIFICATION_TTL_ERROR_MS = 18000;
+
+type PendingSendJob = {
+  messageId: string;
+  conversationId: string;
+  queryText: string;
+  titleSeed: string;
+  parentRunId: string | null;
+  createdAt: string;
+};
 
 const EVENT_TYPES = [
   "approval_approved",
@@ -348,7 +357,15 @@ function saveConversations(conversations: ConversationSummary[]) {
 }
 
 function loadConversationMessages(): Record<string, Message[]> {
-  return loadJSON<Record<string, Message[]>>(STORAGE_KEYS.conversationMessages, {});
+  const raw = loadJSON<Record<string, Message[]>>(STORAGE_KEYS.conversationMessages, {});
+  const normalized: Record<string, Message[]> = {};
+  for (const [conversationId, messages] of Object.entries(raw)) {
+    normalized[conversationId] = (messages || []).map((message) => ({
+      ...message,
+      typing: false
+    }));
+  }
+  return normalized;
 }
 
 function loadNotifications(): NotificationItem[] {
@@ -463,6 +480,7 @@ export type AppStore = {
   sendError: string | null;
   sending: boolean;
   lastFailedMessage: string | null;
+  lastFailedMessageId: string | null;
   lastFailedRunId: string | null;
   sidebarWidth: number;
   activityWidth: number;
@@ -503,6 +521,8 @@ export type AppStore = {
   selectConversation: (conversationId: string | null) => Promise<void>;
   sendMessage: (text: string, options?: { conversationId?: string | null; parentRunId?: string | null }) => Promise<boolean>;
   retrySend: () => Promise<void>;
+  retryMessage: (messageId: string) => Promise<void>;
+  completeMessageTyping: (conversationId: string, messageId: string) => void;
   requestMore: (messageId: string) => Promise<void>;
   clearConversation: (conversationId: string) => void;
   renameConversation: (conversationId: string, title: string) => void;
@@ -548,6 +568,9 @@ let autoBootstrapAttempted = false;
 let pendingAuthRetry: (() => Promise<void>) | null = null;
 let reminderStatusCache = new Map<string, string>();
 const notificationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const sendQueue: PendingSendJob[] = [];
+const failedSendJobs = new Map<string, PendingSendJob>();
+let sendQueueProcessing = false;
 
 function clearNotificationTimer(notificationId: string) {
   const timer = notificationTimers.get(notificationId);
@@ -668,12 +691,21 @@ export const useAppStore = create<AppStore>((set, get) => {
 
   const replaceMessageRunId = (conversationId: string, messageId: string, runId: string) => {
     updateConversationMessages(conversationId, (messages) =>
-      messages.map((item) => (item.id === messageId ? { ...item, run_id: runId } : item))
+      messages.map((item) =>
+        item.id === messageId ? { ...item, run_id: runId, delivery_state: "delivered", error_detail: null } : item
+      )
     );
   };
 
-  const removeMessage = (conversationId: string, messageId: string) => {
-    updateConversationMessages(conversationId, (messages) => messages.filter((item) => item.id !== messageId));
+  const updateMessage = (conversationId: string, messageId: string, patch: Partial<Message>) => {
+    updateConversationMessages(conversationId, (messages) =>
+      messages.map((item) => (item.id === messageId ? { ...item, ...patch } : item))
+    );
+  };
+
+  const getMessage = (conversationId: string, messageId: string): Message | null => {
+    const messages = get().conversationMessages[conversationId] || [];
+    return messages.find((item) => item.id === messageId) || null;
   };
 
   const ensureRunMessages = (conversationId: string, snapshot: Snapshot) => {
@@ -686,7 +718,8 @@ export const useAppStore = create<AppStore>((set, get) => {
         role: "user",
         text: snapshot.run.query_text,
         ts: snapshot.run.created_at || new Date().toISOString(),
-        run_id: snapshot.run.id
+        run_id: snapshot.run.id,
+        delivery_state: "delivered"
       });
     }
     const planMessage = buildPlanMessage(snapshot.plan || []);
@@ -820,6 +853,180 @@ export const useAppStore = create<AppStore>((set, get) => {
     }
   };
 
+  const removeQueuedJobsForConversation = (conversationId: string) => {
+    for (let index = sendQueue.length - 1; index >= 0; index -= 1) {
+      if (sendQueue[index].conversationId === conversationId) {
+        sendQueue.splice(index, 1);
+      }
+    }
+    failedSendJobs.forEach((job, messageId) => {
+      if (job.conversationId === conversationId) {
+        failedSendJobs.delete(messageId);
+      }
+    });
+  };
+
+  const queueSendJob = (job: PendingSendJob, front = false) => {
+    const existingIndex = sendQueue.findIndex((item) => item.messageId === job.messageId);
+    if (existingIndex >= 0) {
+      sendQueue.splice(existingIndex, 1);
+    }
+    if (front) {
+      sendQueue.unshift(job);
+      return;
+    }
+    sendQueue.push(job);
+  };
+
+  const processSendQueue = async () => {
+    if (sendQueueProcessing) return;
+    sendQueueProcessing = true;
+    try {
+      while (sendQueue.length) {
+        const job = sendQueue[0];
+        const projectId = get().projectId;
+        if (!projectId) {
+          const errorText = "Не выбран проект для отправки сообщения.";
+          updateMessage(job.conversationId, job.messageId, { delivery_state: "failed", error_detail: errorText });
+          failedSendJobs.set(job.messageId, job);
+          sendQueue.shift();
+          set({
+            sendError: errorText,
+            lastFailedMessage: job.queryText,
+            lastFailedMessageId: job.messageId,
+            sending: false
+          });
+          break;
+        }
+
+        if (!getMessage(job.conversationId, job.messageId)) {
+          failedSendJobs.delete(job.messageId);
+          sendQueue.shift();
+          continue;
+        }
+
+        updateMessage(job.conversationId, job.messageId, { delivery_state: "sending", error_detail: null });
+        set({
+          sending: true,
+          sendError: null,
+          lastFailedMessage: null,
+          lastFailedMessageId: null,
+          lastFailedRunId: null
+        });
+
+        const currentConversation = getConversationById(get().conversations, job.conversationId);
+        const latestRunId = currentConversation?.run_ids.slice(-1)[0] || null;
+        const parentRunId = job.parentRunId || latestRunId;
+
+        let response: RunIntentResponse;
+        try {
+          response = await runService.createRun(projectId, {
+            query_text: job.queryText,
+            mode: getRunMode(),
+            parent_run_id: parentRunId || undefined
+          });
+        } catch (err) {
+          sendQueue.shift();
+          const message = err instanceof Error ? err.message : "Не удалось отправить запрос";
+          updateMessage(job.conversationId, job.messageId, { delivery_state: "failed", error_detail: message });
+          failedSendJobs.set(job.messageId, job);
+          set({ lastFailedMessage: job.queryText, lastFailedMessageId: job.messageId });
+          if (isAuthError(err)) {
+            pendingAuthRetry = async () => {
+              await get().retryMessage(job.messageId);
+            };
+            setAuthFailure(err.detail || err.message || "Требуется подключение");
+          } else if (isNetworkError(err)) {
+            setServerUnreachable();
+          } else {
+            set({ sendError: message });
+          }
+          break;
+        }
+
+        sendQueue.shift();
+
+        if (!response.run) {
+          const message = "Не удалось создать чат";
+          updateMessage(job.conversationId, job.messageId, { delivery_state: "failed", error_detail: message });
+          failedSendJobs.set(job.messageId, job);
+          set({
+            sendError: message,
+            lastFailedMessage: job.queryText,
+            lastFailedMessageId: job.messageId
+          });
+          break;
+        }
+
+        failedSendJobs.delete(job.messageId);
+        const run = response.run;
+        replaceMessageRunId(job.conversationId, job.messageId, run.id);
+        const runMap = { ...get().runMap, [run.id]: run };
+        let conversations = get().conversations.map((conv) => {
+          if (conv.id !== job.conversationId) return conv;
+          const nextTitle = conv.title === "Новый чат" ? buildConversationTitle(job.titleSeed) : conv.title;
+          const runIds = conv.run_ids.includes(run.id) ? conv.run_ids : [...conv.run_ids, run.id];
+          return {
+            ...conv,
+            title: nextTitle,
+            run_ids: runIds,
+            updated_at: run.created_at || job.createdAt,
+            app_icons: mapRunIcons(run)
+          };
+        });
+        conversations = conversations.sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+        set({
+          runMap,
+          conversations,
+          activeRunId: run.id,
+          currentRun: run,
+          lastSelectedChatId: get().lastSelectedChatId || job.conversationId
+        });
+        saveConversations(conversations);
+
+        const appendAssistantReply = (text: string, typing = true) => {
+          const userName = nameFromMeta(run.meta);
+          appendMessage(job.conversationId, {
+            id: createId("msg"),
+            chat_id: job.conversationId,
+            role: "astra",
+            text: withName(text, userName),
+            ts: new Date().toISOString(),
+            run_id: run.id,
+            typing
+          });
+        };
+
+        if (response.kind === "clarify") {
+          const questions = response.questions?.filter(Boolean) || [];
+          appendAssistantReply(questions.join("\n") || PHRASES.clarifyFallback);
+        }
+        if (response.kind === "chat") {
+          appendAssistantReply(response.chat_response || PHRASES.chatFallback);
+        }
+        if (response.kind === "act") {
+          appendAssistantReply(PHRASES.actStart, false);
+        }
+
+        if (get().lastSelectedChatId === job.conversationId) {
+          await get().selectConversation(job.conversationId);
+        }
+
+        if (response.kind === "act") {
+          try {
+            await runService.startRun(run.id);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Не удалось запустить выполнение";
+            set({ sendError: message, lastFailedRunId: run.id });
+          }
+        }
+      }
+    } finally {
+      sendQueueProcessing = false;
+      set({ sending: false });
+    }
+  };
+
   const startPolling = (runId: string, refresh: (id: string) => Promise<void>) => {
     if (pollTimer) return;
     pollTimer = window.setInterval(() => {
@@ -870,6 +1077,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     sendError: null,
     sending: false,
     lastFailedMessage: null,
+    lastFailedMessageId: null,
     lastFailedRunId: null,
     sidebarWidth: clamp(loadNumber(STORAGE_KEYS.sidebarWidth, DEFAULT_SIDEBAR_WIDTH), 220, 420),
     activityWidth: clamp(loadNumber(STORAGE_KEYS.activityWidth, DEFAULT_ACTIVITY_WIDTH), 300, 520),
@@ -1230,8 +1438,10 @@ export const useAppStore = create<AppStore>((set, get) => {
     sendMessage: async (text, options) => {
       const projectId = get().projectId;
       if (!projectId) return false;
-      const query = text.trim();
-      if (!query) return false;
+      const queryText = text;
+      const queryTrimmed = text.trim();
+      if (!queryTrimmed) return false;
+
       let conversationId = options?.conversationId ?? get().lastSelectedChatId;
       if (!conversationId) {
         const conversation = createConversation();
@@ -1240,121 +1450,40 @@ export const useAppStore = create<AppStore>((set, get) => {
         set({ conversations, lastSelectedChatId: conversationId });
         saveConversations(conversations);
       }
+
       const currentConversation = getConversationById(get().conversations, conversationId);
       const lastRunId = currentConversation?.run_ids.slice(-1)[0] || null;
       const parentRunId = options?.parentRunId ?? lastRunId;
       const messageId = createId("msg");
       const createdAt = new Date().toISOString();
+
       appendMessage(conversationId, {
         id: messageId,
         chat_id: conversationId,
         role: "user",
-        text: query,
-        ts: createdAt
+        text: queryText,
+        ts: createdAt,
+        delivery_state: "queued",
+        error_detail: null
       });
+      set({ sendError: null, lastFailedMessage: null, lastFailedMessageId: null, lastFailedRunId: null });
 
-      set({ sending: true, sendError: null, lastFailedMessage: null, lastFailedRunId: null });
-      try {
-        const response = await runService.createRun(projectId, {
-          query_text: query,
-          mode: getRunMode(),
-          parent_run_id: parentRunId || undefined
-        });
-        if (!response.run) {
-          throw new Error("Не удалось создать чат");
-        }
-        const run = response.run;
-        replaceMessageRunId(conversationId, messageId, run.id);
-        const runMap = { ...get().runMap, [run.id]: run };
-        let conversations = get().conversations.map((conv) => {
-          if (conv.id !== conversationId) return conv;
-          const nextTitle = conv.title === "Новый чат" ? buildConversationTitle(query) : conv.title;
-          const runIds = conv.run_ids.includes(run.id) ? conv.run_ids : [...conv.run_ids, run.id];
-          return {
-            ...conv,
-            title: nextTitle,
-            run_ids: runIds,
-            updated_at: run.created_at || createdAt,
-            app_icons: mapRunIcons(run)
-          };
-        });
-        conversations = conversations.sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
-        set({ runMap, conversations, lastSelectedChatId: conversationId, activeRunId: run.id, currentRun: run });
-        saveConversations(conversations);
-
-        if (response.kind === "clarify") {
-          const questions = response.questions?.filter(Boolean) || [];
-          const userName = nameFromMeta(run.meta);
-          appendMessage(conversationId, {
-            id: createId("msg"),
-            chat_id: conversationId,
-            role: "astra",
-            text: withName(questions.join("\n") || PHRASES.clarifyFallback, userName),
-            ts: new Date().toISOString(),
-            run_id: run.id
-          });
-        }
-        if (response.kind === "chat") {
-          const userName = nameFromMeta(run.meta);
-          const baseText = response.chat_response || PHRASES.chatFallback;
-          appendMessage(conversationId, {
-            id: createId("msg"),
-            chat_id: conversationId,
-            role: "astra",
-            text: withName(baseText, userName),
-            ts: new Date().toISOString(),
-            run_id: run.id
-          });
-        }
-        if (response.kind === "act") {
-          const userName = nameFromMeta(run.meta);
-          appendMessage(conversationId, {
-            id: createId("msg"),
-            chat_id: conversationId,
-            role: "astra",
-            text: withName(PHRASES.actStart, userName),
-            ts: new Date().toISOString(),
-            run_id: run.id
-          });
-        }
-
-        await get().selectConversation(conversationId);
-
-        if (response.kind === "act") {
-          try {
-            await runService.startRun(run.id);
-          } catch (err) {
-            const message = err instanceof Error ? err.message : "Не удалось запустить выполнение";
-            set({ sendError: message, lastFailedRunId: run.id });
-          }
-        }
-
-        set({ sending: false });
-        return true;
-      } catch (err) {
-        removeMessage(conversationId, messageId);
-        if (isAuthError(err)) {
-          pendingAuthRetry = async () => {
-            await get().sendMessage(query, options);
-          };
-          setAuthFailure(err.detail || err.message || "Требуется подключение");
-          set({ lastFailedMessage: query });
-          return false;
-        }
-        if (isNetworkError(err)) {
-          setServerUnreachable();
-          return false;
-        }
-        const message = err instanceof Error ? err.message : "Не удалось отправить запрос";
-        set({ sending: false, sendError: message, lastFailedMessage: query });
-        return false;
-      }
+      queueSendJob({
+        messageId,
+        conversationId,
+        queryText,
+        titleSeed: queryTrimmed,
+        parentRunId,
+        createdAt
+      });
+      void processSendQueue();
+      return true;
     },
     retrySend: async () => {
-      const failedMessage = get().lastFailedMessage;
+      const failedMessageId = get().lastFailedMessageId;
       const failedRunId = get().lastFailedRunId;
-      if (failedMessage) {
-        await get().sendMessage(failedMessage);
+      if (failedMessageId) {
+        await get().retryMessage(failedMessageId);
         return;
       }
       if (failedRunId) {
@@ -1366,6 +1495,36 @@ export const useAppStore = create<AppStore>((set, get) => {
           set({ sendError: message });
         }
       }
+    },
+    retryMessage: async (messageId) => {
+      let job = failedSendJobs.get(messageId) || null;
+      if (!job) {
+        const entries = Object.entries(get().conversationMessages);
+        for (const [conversationId, messages] of entries) {
+          const source = messages.find((item) => item.id === messageId && item.role === "user");
+          if (!source) continue;
+          const conversation = getConversationById(get().conversations, conversationId);
+          const runId = conversation?.run_ids.slice(-1)[0] || null;
+          job = {
+            messageId,
+            conversationId,
+            queryText: source.text,
+            titleSeed: source.text.trim() || "Новый чат",
+            parentRunId: runId,
+            createdAt: source.ts || new Date().toISOString()
+          };
+          break;
+        }
+      }
+      if (!job) return;
+      failedSendJobs.delete(messageId);
+      updateMessage(job.conversationId, messageId, { delivery_state: "queued", error_detail: null });
+      set({ sendError: null, lastFailedMessage: null, lastFailedMessageId: null });
+      queueSendJob(job, true);
+      void processSendQueue();
+    },
+    completeMessageTyping: (conversationId, messageId) => {
+      updateMessage(conversationId, messageId, { typing: false });
     },
     requestMore: async (messageId) => {
       const conversationId = get().lastSelectedChatId;
@@ -1380,6 +1539,7 @@ export const useAppStore = create<AppStore>((set, get) => {
       });
     },
     clearConversation: (conversationId) => {
+      removeQueuedJobsForConversation(conversationId);
       const conversations = get().conversations.map((conv) =>
         conv.id === conversationId ? { ...conv, run_ids: [] } : conv
       );
@@ -1394,7 +1554,11 @@ export const useAppStore = create<AppStore>((set, get) => {
         events: [],
         activity: null,
         streamState: "idle",
-        connectionHint: null
+        connectionHint: null,
+        sendError: null,
+        lastFailedMessage: null,
+        lastFailedMessageId: null,
+        lastFailedRunId: null
       });
       saveConversations(conversations);
       saveConversationMessages(conversationMessages);
@@ -1409,6 +1573,7 @@ export const useAppStore = create<AppStore>((set, get) => {
       saveConversations(conversations);
     },
     deleteConversation: (conversationId) => {
+      removeQueuedJobsForConversation(conversationId);
       const conversations = get().conversations.filter((conv) => conv.id !== conversationId);
       const conversationMessages = { ...get().conversationMessages };
       delete conversationMessages[conversationId];
@@ -1422,7 +1587,11 @@ export const useAppStore = create<AppStore>((set, get) => {
         approvals: [],
         events: [],
         activity: null,
-        streamState: "idle"
+        streamState: "idle",
+        sendError: null,
+        lastFailedMessage: null,
+        lastFailedMessageId: null,
+        lastFailedRunId: null
       });
       saveConversations(conversations);
       saveConversationMessages(conversationMessages);

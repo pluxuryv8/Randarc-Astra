@@ -12,7 +12,7 @@ import { cn } from "../shared/utils/cn";
 import { formatAuthDetail } from "../shared/utils/authDetail";
 import { useAppStore } from "../shared/store/appStore";
 
-const statusOptions = ["В работе", "Думаю", "Планирую", "Ищу информацию", "Жду подтверждения", "Ошибка"];
+const statusOptions = ["Думаю", "Формулирую", "Планирую", "Ищу информацию", "В работе", "Жду подтверждения", "Ошибка"];
 const STORAGE_KEY = "preference_feedback";
 const SCROLL_OFFSET = 80;
 
@@ -54,20 +54,93 @@ function deriveStatus({
   apiStatus,
   runStatus,
   activityPhase,
-  mode
+  mode,
+  latestEventType
 }: {
   apiStatus: string;
   runStatus?: string;
   activityPhase?: string;
   mode?: string;
+  latestEventType?: string;
 }) {
   if (apiStatus === "error") return "Ошибка";
   if (activityPhase === "waiting") return "Жду подтверждения";
+  if (latestEventType === "llm_request_started" || latestEventType === "llm_route_decided") return "Думаю";
+  if (latestEventType === "chat_response_generated" || latestEventType === "llm_request_succeeded") return "Формулирую";
+  if (latestEventType === "source_found" || latestEventType === "source_fetched") return "Ищу информацию";
+  if (latestEventType === "plan_created" || latestEventType === "step_planned" || latestEventType === "intent_decided")
+    return "Планирую";
   if (runStatus === "planning") return "Планирую";
   if (runStatus === "running") return mode === "research" ? "Ищу информацию" : "В работе";
   if (runStatus === "paused") return "Думаю";
   if (runStatus === "failed" || runStatus === "canceled") return "Ошибка";
   return "Думаю";
+}
+
+function extractRunFailureReason(events: Array<{ type: string; message: string; payload?: Record<string, unknown>; run_id?: string }>, runId?: string) {
+  const reversed = [...events].reverse();
+  for (const event of reversed) {
+    if (runId && event.run_id && event.run_id !== runId) continue;
+    if (!["run_failed", "task_failed", "llm_request_failed", "local_llm_http_error"].includes(event.type)) continue;
+    const payload = event.payload || {};
+    const payloadError =
+      typeof payload.error === "string"
+        ? payload.error
+        : typeof payload.error_type === "string"
+          ? payload.error_type
+          : typeof payload.detail === "string"
+            ? payload.detail
+            : null;
+    const httpStatus = typeof payload.http_status_if_any === "number" ? payload.http_status_if_any : null;
+    if (payloadError && httpStatus) {
+      return `${payloadError} (HTTP ${httpStatus})`;
+    }
+    if (payloadError) {
+      return payloadError;
+    }
+    if (event.message) {
+      return event.message;
+    }
+  }
+  return null;
+}
+
+function deriveConnectionBadge({
+  authStatus,
+  streamState,
+  hint,
+  lastStatus
+}: {
+  authStatus: string;
+  streamState: string;
+  hint?: string | null;
+  lastStatus?: number | null;
+}) {
+  const text = (hint || "").toLowerCase();
+  if (lastStatus === 401 || lastStatus === 403 || text.includes("401")) {
+    return { tone: "danger" as const, label: "Подключение: 401 (токен)" };
+  }
+  if (text.includes("url/порт") || text.includes("порт")) {
+    return { tone: "warn" as const, label: "Подключение: PORT MISMATCH" };
+  }
+  if (authStatus === "SERVER_UNREACHABLE" || streamState === "offline" || text.includes("api unreachable")) {
+    return { tone: "danger" as const, label: "Подключение: REFUSED" };
+  }
+  if (streamState === "reconnecting") {
+    return { tone: "warn" as const, label: "Подключение: reconnecting" };
+  }
+  if (authStatus === "CONNECTED" && streamState === "live") {
+    return { tone: "success" as const, label: "Подключение: OK" };
+  }
+  return { tone: "muted" as const, label: "Подключение: проверка" };
+}
+
+function derivePendingAssistantText(deliveryState?: string, activeStatus?: string) {
+  if (deliveryState === "queued") return "Astra приняла запрос и ждёт своей очереди…";
+  if (activeStatus === "Ищу информацию") return "Astra ищет информацию…";
+  if (activeStatus === "Планирую") return "Astra планирует ответ…";
+  if (activeStatus === "Формулирую") return "Astra формулирует ответ…";
+  return "Astra готовит ответ…";
 }
 
 export default function ChatPage() {
@@ -86,6 +159,7 @@ export default function ChatPage() {
   const activity = useAppStore((state) => state.activity);
   const currentRun = useAppStore((state) => state.currentRun);
   const approvals = useAppStore((state) => state.approvals);
+  const events = useAppStore((state) => state.events);
   const streamState = useAppStore((state) => state.streamState);
   const apiStatus = useAppStore((state) => state.apiStatus);
   const apiError = useAppStore((state) => state.apiError);
@@ -100,6 +174,8 @@ export default function ChatPage() {
   const resetAuth = useAppStore((state) => state.resetAuth);
   const sendMessage = useAppStore((state) => state.sendMessage);
   const retrySend = useAppStore((state) => state.retrySend);
+  const retryMessage = useAppStore((state) => state.retryMessage);
+  const completeMessageTyping = useAppStore((state) => state.completeMessageTyping);
   const requestMore = useAppStore((state) => state.requestMore);
   const clearConversation = useAppStore((state) => state.clearConversation);
   const openRenameChat = useAppStore((state) => state.openRenameChat);
@@ -109,11 +185,15 @@ export default function ChatPage() {
 
   const threadRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
+  const lastSubmitAtRef = useRef(0);
 
   const messages = useMemo(() => {
     if (!conversationId) return [];
     return conversationMessages[conversationId] || [];
   }, [conversationId, conversationMessages]);
+
+  const lastMessage = messages.length ? messages[messages.length - 1] : null;
+  const hasAssistantTyping = messages.some((message) => message.role === "astra" && message.typing);
 
   const authDetail = formatAuthDetail(authDiagnostics.lastErrorDetail || authError);
 
@@ -123,9 +203,26 @@ export default function ChatPage() {
         apiStatus,
         runStatus: currentRun?.status,
         activityPhase: activity?.phase,
-        mode: currentRun?.mode
+        mode: currentRun?.mode,
+        latestEventType: events[events.length - 1]?.type
       }),
-    [activity?.phase, apiStatus, currentRun?.mode, currentRun?.status]
+    [activity?.phase, apiStatus, currentRun?.mode, currentRun?.status, events]
+  );
+
+  const runFailureReason = useMemo(
+    () => extractRunFailureReason(events, currentRun?.id),
+    [events, currentRun?.id]
+  );
+
+  const connectionBadge = useMemo(
+    () =>
+      deriveConnectionBadge({
+        authStatus,
+        streamState,
+        hint: connectionHint,
+        lastStatus: authDiagnostics.lastStatus
+      }),
+    [authDiagnostics.lastStatus, authStatus, connectionHint, streamState]
   );
 
   const hasApprovalPending = useMemo(
@@ -137,7 +234,13 @@ export default function ChatPage() {
     currentRun?.status === "running" || currentRun?.status === "paused" || currentRun?.status === "planning";
   const showRunError =
     !sendError && (activity?.phase === "error" || currentRun?.status === "failed" || currentRun?.status === "canceled");
-  const runErrorReason = connectionHint || apiError || "Не удалось завершить выполнение.";
+  const runErrorReason = runFailureReason || connectionHint || apiError || "Не удалось завершить выполнение.";
+  const showPendingAssistant =
+    Boolean(lastMessage) &&
+    lastMessage?.role === "user" &&
+    (lastMessage.delivery_state === "queued" || lastMessage.delivery_state === "sending") &&
+    !hasAssistantTyping;
+  const pendingAssistantText = derivePendingAssistantText(lastMessage?.delivery_state, activeStatus);
 
   useEffect(() => {
     setRatings(loadRatings(conversationId));
@@ -199,6 +302,15 @@ export default function ChatPage() {
     navigator.clipboard?.writeText(message.text).catch(() => null);
   };
 
+  const handleRetryMessage = async (messageId: string) => {
+    await retryMessage(messageId);
+  };
+
+  const handleTypingDone = (messageId: string) => {
+    if (!conversationId) return;
+    completeMessageTyping(conversationId, messageId);
+  };
+
   const submitFeedback = () => {
     if (!feedbackText.trim()) {
       setFeedbackError("Пожалуйста, уточните, что не так.");
@@ -217,12 +329,20 @@ export default function ChatPage() {
     setFeedbackOpen(false);
   };
 
-  const canSend = authStatus === "CONNECTED" && !sending;
+  const canSend = authStatus === "CONNECTED";
+  const canSubmit = canSend && Boolean(composerValue.trim());
 
   const handleSend = async () => {
-    if (!composerValue.trim() || !canSend) return;
-    const ok = await sendMessage(composerValue);
-    if (ok) setComposerValue("");
+    if (!canSubmit) return;
+    const now = Date.now();
+    if (now - lastSubmitAtRef.current < 250) return;
+    lastSubmitAtRef.current = now;
+    const payload = composerValue;
+    setComposerValue("");
+    const ok = await sendMessage(payload);
+    if (!ok) {
+      setComposerValue(payload);
+    }
   };
 
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -368,6 +488,9 @@ export default function ChatPage() {
             {status}
           </Badge>
         ))}
+        <Badge tone={connectionBadge.tone} size="sm">
+          {connectionBadge.label}
+        </Badge>
         {streamState === "connecting" ? (
           <Badge tone="muted" size="sm">
             События: подключаюсь…
@@ -400,6 +523,10 @@ export default function ChatPage() {
               onThumbUp={handleThumbUp}
               onThumbDown={handleThumbDown}
               onCopy={handleCopy}
+              onRetryMessage={handleRetryMessage}
+              onTypingDone={handleTypingDone}
+              showPendingAssistant={showPendingAssistant}
+              pendingAssistantText={pendingAssistantText}
               onScroll={handleScroll}
               scrollRef={threadRef}
             />
@@ -432,7 +559,7 @@ export default function ChatPage() {
           placeholder="Напишите сообщение…"
           disabled={!canSend}
         />
-        <Button type="button" variant="primary" onClick={handleSend} disabled={!canSend}>
+        <Button type="button" variant="primary" onClick={handleSend} disabled={!canSubmit}>
           {sending ? (
             <>
               <Loader2 size={16} className="spin" />

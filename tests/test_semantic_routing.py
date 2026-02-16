@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -69,6 +70,7 @@ class FailingChatBrain:
 
 def _init_store(tmp_path: Path):
     os.environ["ASTRA_DATA_DIR"] = str(tmp_path)
+    os.environ["ASTRA_CHAT_FAST_PATH_ENABLED"] = "false"
     store.reset_for_tests()
     store.init(tmp_path, ROOT / "memory" / "migrations")
 
@@ -180,7 +182,12 @@ def test_chat_run_saves_memory_item(monkeypatch, tmp_path: Path):
     assert response.status_code == 200
     assert response.json()["kind"] == "chat"
 
-    memory_items = client.get("/api/v1/memory/list", headers=headers).json()
+    memory_items: list[dict] = []
+    for _ in range(40):
+        memory_items = client.get("/api/v1/memory/list", headers=headers).json()
+        if memory_items:
+            break
+        time.sleep(0.01)
     assert len(memory_items) == 1
     assert any(item.get("content") == "Пользователь представился как Михаил." for item in memory_items)
     assert any((item.get("meta") or {}).get("facts") for item in memory_items)
@@ -341,4 +348,98 @@ def test_chat_llm_timeout_degrades_to_fallback_chat(monkeypatch, tmp_path: Path)
     events = store.list_events(payload["run"]["id"], limit=50)
     event_types = [item.get("type") for item in events]
     assert "chat_response_generated" in event_types
+    assert "run_failed" not in event_types
+
+
+def test_fast_chat_path_skips_semantic_and_memory_interpreter(monkeypatch, tmp_path: Path):
+    _init_store(tmp_path)
+    monkeypatch.setenv("ASTRA_CHAT_FAST_PATH_ENABLED", "true")
+    monkeypatch.setattr(runs_route, "get_brain", lambda: FakeChatBrain())
+
+    def _semantic_should_not_run(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("semantic should be skipped by fast chat path")
+
+    def _memory_should_not_run(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("memory interpreter should be skipped by fast chat path")
+
+    monkeypatch.setattr(intent_router, "decide_semantic", _semantic_should_not_run)
+    monkeypatch.setattr(runs_route, "interpret_user_message_for_memory", _memory_should_not_run)
+
+    client = TestClient(create_app())
+    headers = _bootstrap(client)
+    project = client.post("/api/v1/projects", json={"name": "semantic", "tags": [], "settings": {}}, headers=headers).json()
+
+    response = client.post(
+        f"/api/v1/projects/{project['id']}/runs",
+        json={"query_text": "214 + 43241", "mode": "plan_only"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "chat"
+    assert payload["run"]["meta"]["intent_path"] == "fast_chat_path"
+    assert payload["run"]["meta"]["memory_interpretation_error"] == "memory_interpreter_skipped_fast_path"
+
+
+def test_memory_save_failure_is_non_blocking(monkeypatch, tmp_path: Path):
+    _init_store(tmp_path)
+    monkeypatch.setenv("ASTRA_CHAT_FAST_PATH_ENABLED", "false")
+    monkeypatch.setattr(runs_route, "get_brain", lambda: FakeChatBrain())
+    monkeypatch.setattr(
+        runs_route,
+        "interpret_user_message_for_memory",
+        lambda *args, **kwargs: _memory_interpretation(
+            should_store=True,
+            summary="Пользователь представился как Михаил.",
+            facts=[{"key": "user.name", "value": "Михаил", "confidence": 0.95, "evidence": "меня Михаил зовут"}],
+        ),
+    )
+    monkeypatch.setattr(
+        intent_router,
+        "decide_semantic",
+        lambda *args, **kwargs: _semantic(
+            intent="CHAT",
+            memory_item=SemanticMemoryItem(
+                kind="user_profile",
+                text="Имя пользователя: Михаил.",
+                evidence="меня Михаил зовут",
+            ),
+        ),
+    )
+
+    def _memory_save_should_fail(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise RuntimeError("forced_memory_save_error")
+
+    monkeypatch.setattr(runs_route.memory_save_skill, "run", _memory_save_should_fail)
+
+    client = TestClient(create_app())
+    headers = _bootstrap(client)
+    project = client.post("/api/v1/projects", json={"name": "semantic", "tags": [], "settings": {}}, headers=headers).json()
+
+    response = client.post(
+        f"/api/v1/projects/{project['id']}/runs",
+        json={"query_text": "кстати меня Михаил зовут", "mode": "plan_only"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "chat"
+
+    events = []
+    for _ in range(60):
+        events = store.list_events(payload["run"]["id"], limit=80)
+        if any(
+            item.get("type") == "llm_request_failed"
+            and (item.get("payload") or {}).get("error_type") == "memory_save_failed"
+            for item in events
+        ):
+            break
+        time.sleep(0.01)
+
+    assert any(
+        item.get("type") == "llm_request_failed"
+        and (item.get("payload") or {}).get("error_type") == "memory_save_failed"
+        for item in events
+    )
+    event_types = [item.get("type") for item in events]
     assert "run_failed" not in event_types

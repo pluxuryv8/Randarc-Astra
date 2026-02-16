@@ -22,6 +22,8 @@ API_PORT="$ASTRA_API_PORT"
 BRIDGE_PORT="$ASTRA_BRIDGE_PORT"
 VITE_PORT=5173
 OLLAMA_PORT=11434
+OLLAMA_FLASH_ATTENTION_DESIRED="${ASTRA_OLLAMA_FLASH_ATTENTION:-0}"
+OLLAMA_RESTART_ON_ENV_MISMATCH="${ASTRA_OLLAMA_RESTART_ON_ENV_MISMATCH:-true}"
 
 PIDS_DIR="$ROOT_DIR/.astra/pids"
 LOG_BASE="$ROOT_DIR/artifacts/dev_logs"
@@ -37,6 +39,17 @@ fail() { echo "FAIL $*"; }
 port_listening() {
   local port="$1"
   lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1
+}
+
+kill_port_listeners() {
+  local port="$1"
+  local label="$2"
+  local pids
+  pids="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
+  if [ -n "$pids" ]; then
+    kill $pids >/dev/null 2>&1 || true
+    ok "$label: освобождён порт $port"
+  fi
 }
 
 wait_port() {
@@ -72,31 +85,46 @@ read_pid() {
 }
 
 start_ollama() {
+  local log_dir="$1"
+
   if port_listening "$OLLAMA_PORT"; then
-    ok "Ollama уже запущена (порт $OLLAMA_PORT)"
-    return 0
-  fi
+    local running_pid
+    local running_cmd
+    local running_flash
+    local mismatch_allowed
 
-local started_service=0
-  if command -v brew >/dev/null 2>&1; then
-    if brew services start ollama >/dev/null 2>&1; then
-      started_service=1
-    fi
-  fi
+    running_pid="$(lsof -nP -iTCP:"$OLLAMA_PORT" -sTCP:LISTEN -t 2>/dev/null | head -n1 || true)"
+    running_cmd="$(ps eww -p "$running_pid" -o command= 2>/dev/null || true)"
+    running_flash="$(echo "$running_cmd" | sed -nE 's/.*OLLAMA_FLASH_ATTENTION=([^ ]+).*/\1/p')"
+    mismatch_allowed="$OLLAMA_RESTART_ON_ENV_MISMATCH"
 
-  if wait_port "$OLLAMA_PORT" "Ollama"; then
-    if [ "$started_service" -eq 1 ]; then
-      echo "brew" > "$PIDS_DIR/ollama.service"
+    if [ -n "$running_flash" ] && [ "$running_flash" != "$OLLAMA_FLASH_ATTENTION_DESIRED" ] && [[ ! "$mismatch_allowed" =~ ^(0|false|no|off)$ ]]; then
+      warn "Ollama запущена с OLLAMA_FLASH_ATTENTION=${running_flash}, перезапуск в ${OLLAMA_FLASH_ATTENTION_DESIRED}"
+      if [[ "$running_cmd" == *"homebrew.mxcl.ollama"* ]] && command -v brew >/dev/null 2>&1; then
+        brew services stop ollama >/dev/null 2>&1 || true
+      fi
+      kill "$running_pid" >/dev/null 2>&1 || true
+      for _ in $(seq 1 40); do
+        if ! port_listening "$OLLAMA_PORT"; then
+          break
+        fi
+        sleep 0.25
+      done
+    else
+      ok "Ollama уже запущена (порт $OLLAMA_PORT)"
+      return 0
     fi
-    return 0
   fi
 
   if command -v ollama >/dev/null 2>&1; then
-    local log_dir="$1"
-    nohup ollama serve >"$log_dir/ollama.log" 2>&1 &
+    OLLAMA_FLASH_ATTENTION="$OLLAMA_FLASH_ATTENTION_DESIRED" nohup ollama serve >"$log_dir/ollama.log" 2>&1 &
     write_pid "ollama" "$!"
-    wait_port "$OLLAMA_PORT" "Ollama"
-    return 0
+    if wait_port "$OLLAMA_PORT" "Ollama"; then
+      ok "Ollama поднята локально (OLLAMA_FLASH_ATTENTION=${OLLAMA_FLASH_ATTENTION_DESIRED})"
+      return 0
+    fi
+    warn "Ollama не поднялась после запуска. Проверь лог: $log_dir/ollama.log"
+    return 1
   fi
 
   warn "Ollama не найдена. Установите ollama или запустите вручную."
@@ -109,6 +137,11 @@ start_stack() {
   local log_dir="$LOG_BASE/$ts"
   mkdir -p "$log_dir"
   echo "$log_dir" > "$LATEST_LOG_FILE"
+
+  if port_listening "$BRIDGE_PORT" && ! port_listening "$VITE_PORT"; then
+    warn "Найден stale bridge без Vite. Очищаю порт ${BRIDGE_PORT} перед запуском."
+    kill_port_listeners "$BRIDGE_PORT" "Bridge"
+  fi
 
   start_ollama "$log_dir" || true
 
@@ -179,8 +212,15 @@ do_stop() {
   done
 
   if [ -f "$PIDS_DIR/ollama.service" ]; then
+    if command -v brew >/dev/null 2>&1; then
+      brew services stop ollama >/dev/null 2>&1 || true
+    fi
     rm -f "$PIDS_DIR/ollama.service"
   fi
+
+  kill_port_listeners "$BRIDGE_PORT" "Bridge"
+  kill_port_listeners "$VITE_PORT" "Vite"
+  kill_port_listeners "$API_PORT" "API"
 
   if [ "$stopped" -eq 0 ]; then
     ./scripts/stop.sh || true

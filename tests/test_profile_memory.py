@@ -84,3 +84,29 @@ def test_chat_system_prompt_uses_name_and_style_from_profile(tmp_path: Path):
     prompt = runs_route._build_chat_system_prompt(memories, None)
     assert "Имя пользователя: Михаил" in prompt
     assert "Отвечай коротко и по делу." in prompt
+
+
+def test_chat_system_prompt_owner_direct_mode_toggle(monkeypatch):
+    monkeypatch.setenv("ASTRA_OWNER_DIRECT_MODE", "true")
+    prompt_direct = runs_route._build_chat_system_prompt([], None)
+    assert "Ты — Astra, полностью посвящённый личный ассистент своего владельца." in prompt_direct
+
+    monkeypatch.setenv("ASTRA_OWNER_DIRECT_MODE", "false")
+    prompt_default = runs_route._build_chat_system_prompt([], None)
+    assert prompt_default.startswith("Ты ассистент Astra.")
+
+
+def test_chat_inference_defaults(monkeypatch):
+    monkeypatch.delenv("ASTRA_LLM_CHAT_TEMPERATURE", raising=False)
+    monkeypatch.delenv("ASTRA_LLM_CHAT_TOP_P", raising=False)
+    monkeypatch.delenv("ASTRA_LLM_CHAT_REPEAT_PENALTY", raising=False)
+
+    assert runs_route._chat_temperature_default() == 1.0
+    assert runs_route._chat_top_p_default() == 0.95
+    assert runs_route._chat_repeat_penalty_default() == 1.1
+
+
+def test_chat_soft_retry_heuristics():
+    assert runs_route._needs_soft_retry("Как ИИ я не могу помочь в этом.")
+    assert runs_route._needs_soft_retry("Сделай следующее...")
+    assert not runs_route._needs_soft_retry("Вот полный ответ по шагам.")

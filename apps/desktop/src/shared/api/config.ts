@@ -5,10 +5,11 @@ type RuntimeConfig = {
 };
 
 const env = ((import.meta as ImportMeta & { env?: EnvMap }).env ?? {}) as EnvMap;
-const processEnv =
-  typeof process !== "undefined" && process.env
-    ? (process.env as Record<string, string | undefined>)
-    : {};
+const processEnv = (() => {
+  if (typeof globalThis === "undefined") return {} as Record<string, string | undefined>;
+  const candidate = globalThis as { process?: { env?: Record<string, string | undefined> } };
+  return candidate.process?.env || {};
+})();
 const runtimeConfig: RuntimeConfig =
   typeof globalThis !== "undefined"
     ? ((globalThis as { __ASTRA_CONFIG__?: RuntimeConfig }).__ASTRA_CONFIG__ ?? {})

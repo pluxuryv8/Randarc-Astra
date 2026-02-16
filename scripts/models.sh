@@ -4,12 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="${ASTRA_DATA_DIR:-$ROOT_DIR/.astra}"
 MODELS_DIR="$DATA_DIR/models"
-CHAT_MODEL="${ASTRA_LLM_LOCAL_CHAT_MODEL:-saiga-nemo-12b}"
+CHAT_MODEL="${ASTRA_LLM_LOCAL_CHAT_MODEL:-qwen2.5:7b-instruct}"
+CHAT_FAST_MODEL="${ASTRA_LLM_LOCAL_CHAT_MODEL_FAST:-qwen2.5:3b-instruct}"
+CHAT_COMPLEX_MODEL="${ASTRA_LLM_LOCAL_CHAT_MODEL_COMPLEX:-$CHAT_MODEL}"
 CODE_MODEL="${ASTRA_LLM_LOCAL_CODE_MODEL:-deepseek-coder-v2:16b-lite-instruct-q8_0}"
-DEFAULT_SAIGA_URL="https://huggingface.co/IlyaGusev/saiga_nemo_12b_gguf/resolve/main/saiga_nemo_12b.Q4_K_M.gguf"
-SAIGA_URL="${ASTRA_SAIGA_GGUF_URL:-$DEFAULT_SAIGA_URL}"
-SAIGA_GGUF_PATH="$MODELS_DIR/saiga_nemo_12b.gguf"
-REPO_MODELFILE="$ROOT_DIR/models/Modelfile.saiga-nemo-12b"
+LEGACY_SAIGA_GGUF_PATH="$MODELS_DIR/saiga_nemo_12b.gguf"
 
 ok() { echo "OK  $*"; }
 warn() { echo "WARN $*"; }
@@ -25,72 +24,64 @@ ensure_ollama() {
   ok "ollama is available"
 }
 
-ensure_modelfile() {
-  if [ ! -f "$REPO_MODELFILE" ]; then
-    fail "Missing Modelfile: $REPO_MODELFILE"
-  fi
-}
-
-resolve_modelfile() {
-  mkdir -p "$MODELS_DIR"
-  local target="$MODELS_DIR/Modelfile.saiga-nemo-12b"
-  local abs_path
-  abs_path="$(cd "$(dirname "$SAIGA_GGUF_PATH")" && pwd)/$(basename "$SAIGA_GGUF_PATH")"
-  sed "s|__SAIGA_GGUF_PATH__|$abs_path|g" "$REPO_MODELFILE" > "$target"
-  echo "$target"
-}
-
-install_saiga() {
-  if [ -z "$SAIGA_URL" ]; then
-    fail "ASTRA_SAIGA_GGUF_URL is empty. Provide a GGUF URL."
-  fi
-  mkdir -p "$MODELS_DIR"
-  if [ -s "$SAIGA_GGUF_PATH" ]; then
-    ok "GGUF already present: $SAIGA_GGUF_PATH"
+normalize_name() {
+  local model="$1"
+  if [[ "$model" == *:* ]]; then
+    echo "$model"
   else
-    ok "Downloading Saiga Nemo 12B GGUF"
-    curl -fL --retry 3 --retry-delay 2 -o "$SAIGA_GGUF_PATH" "$SAIGA_URL"
-    if [ ! -s "$SAIGA_GGUF_PATH" ]; then
-      fail "Downloaded file is empty: $SAIGA_GGUF_PATH"
-    fi
-    ok "Downloaded: $SAIGA_GGUF_PATH"
+    echo "${model}:latest"
   fi
+}
 
-  local modelfile
-  modelfile="$(resolve_modelfile)"
-  ok "Creating Ollama model: $CHAT_MODEL"
-  ollama create "$CHAT_MODEL" -f "$modelfile"
+pull_model() {
+  local model="$1"
+  if [ -z "$model" ]; then
+    return 0
+  fi
+  ok "Pulling Ollama model: $model"
+  ollama pull "$model"
+}
+
+install_chat_models() {
+  local models=("$CHAT_MODEL" "$CHAT_FAST_MODEL" "$CHAT_COMPLEX_MODEL")
+  local model
+  declare -A seen=()
+  for model in "${models[@]}"; do
+    [ -z "$model" ] && continue
+    if [[ -n "${seen[$model]:-}" ]]; then
+      continue
+    fi
+    seen["$model"]=1
+    pull_model "$model"
+  done
 }
 
 install_deepseek() {
-  ok "Pulling Ollama model: $CODE_MODEL"
-  ollama pull "$CODE_MODEL"
+  pull_model "$CODE_MODEL"
 }
 
 verify_models() {
   local list
   list="$(ollama list | awk 'NR>1 {print $1}')"
   local missing=0
-  local chat_expected="$CHAT_MODEL"
-  local chat_tagged="$CHAT_MODEL"
-  if [[ "$CHAT_MODEL" != *:* ]]; then
-    chat_tagged="${CHAT_MODEL}:latest"
-  fi
-  if ! printf "%s\n" "$list" | grep -Fxq "$chat_expected" && ! printf "%s\n" "$list" | grep -Fxq "$chat_tagged"; then
-    warn "Missing chat model: $CHAT_MODEL"
-    missing=1
-  fi
-  local code_expected="$CODE_MODEL"
-  local code_tagged="$CODE_MODEL"
-  if [[ "$CODE_MODEL" != *:* ]]; then
-    code_tagged="${CODE_MODEL}:latest"
-  fi
-  if ! printf "%s\n" "$list" | grep -Fxq "$code_expected" && ! printf "%s\n" "$list" | grep -Fxq "$code_tagged"; then
-    warn "Missing code model: $CODE_MODEL"
-    missing=1
-  fi
+  local models=("$CHAT_MODEL" "$CHAT_FAST_MODEL" "$CHAT_COMPLEX_MODEL" "$CODE_MODEL")
+  local model
+  declare -A seen=()
+  for model in "${models[@]}"; do
+    [ -z "$model" ] && continue
+    if [[ -n "${seen[$model]:-}" ]]; then
+      continue
+    fi
+    seen["$model"]=1
+    local normalized
+    normalized="$(normalize_name "$model")"
+    if ! printf "%s\n" "$list" | grep -Fxq "$model" && ! printf "%s\n" "$list" | grep -Fxq "$normalized"; then
+      warn "Missing model: $model"
+      missing=1
+    fi
+  done
   if [ "$missing" -eq 0 ]; then
-    ok "Models present: $CHAT_MODEL, $CODE_MODEL"
+    ok "Models present: chat=$CHAT_MODEL fast=$CHAT_FAST_MODEL complex=$CHAT_COMPLEX_MODEL code=$CODE_MODEL"
     return 0
   fi
   return 1
@@ -98,8 +89,7 @@ verify_models() {
 
 cmd_install() {
   ensure_ollama
-  ensure_modelfile
-  install_saiga
+  install_chat_models
   install_deepseek
   ok "Ollama models installed"
   ollama list
@@ -119,15 +109,15 @@ cmd_verify() {
 
 cmd_clean() {
   if [ "${CONFIRM:-}" != "1" ]; then
-    echo "This will remove downloaded GGUF files from: $MODELS_DIR"
+    echo "This will remove legacy downloaded files from: $MODELS_DIR"
     echo "Run: CONFIRM=1 $0 clean"
     exit 1
   fi
-  if [ -f "$SAIGA_GGUF_PATH" ]; then
-    rm -f "$SAIGA_GGUF_PATH"
-    ok "Removed: $SAIGA_GGUF_PATH"
+  if [ -f "$LEGACY_SAIGA_GGUF_PATH" ]; then
+    rm -f "$LEGACY_SAIGA_GGUF_PATH"
+    ok "Removed legacy file: $LEGACY_SAIGA_GGUF_PATH"
   else
-    warn "No GGUF file found at: $SAIGA_GGUF_PATH"
+    warn "No legacy GGUF file found at: $LEGACY_SAIGA_GGUF_PATH"
   fi
 }
 
@@ -143,7 +133,7 @@ case "${1:-}" in
     ;;
   *)
     echo "Usage: $0 {install|verify|clean}"
-    echo "Env: ASTRA_DATA_DIR, ASTRA_LLM_LOCAL_CHAT_MODEL, ASTRA_LLM_LOCAL_CODE_MODEL, ASTRA_SAIGA_GGUF_URL"
+    echo "Env: ASTRA_DATA_DIR, ASTRA_LLM_LOCAL_CHAT_MODEL, ASTRA_LLM_LOCAL_CHAT_MODEL_FAST, ASTRA_LLM_LOCAL_CHAT_MODEL_COMPLEX, ASTRA_LLM_LOCAL_CODE_MODEL"
     exit 1
     ;;
  esac

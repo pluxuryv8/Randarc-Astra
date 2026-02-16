@@ -46,6 +46,30 @@ def _normalize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return normalized
 
 
+def _messages_to_prompt(messages: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for message in messages:
+        role = str(message.get("role", "user")).strip().lower()
+        content = message.get("content", "")
+        if not isinstance(content, str):
+            try:
+                content = json.dumps(content, ensure_ascii=False)
+            except Exception:
+                content = str(content)
+        content = content.strip()
+        if not content:
+            continue
+        if role == "system":
+            label = "System"
+        elif role == "assistant":
+            label = "Assistant"
+        else:
+            label = "User"
+        parts.append(f"{label}:\n{content}")
+    parts.append("Assistant:")
+    return "\n\n".join(parts)
+
+
 def _normalize_json_schema(schema: dict | None) -> dict | None:
     if not schema:
         return None
@@ -120,6 +144,7 @@ class ProviderResult:
     text: str
     usage: dict | None
     raw: dict
+    model_id: str | None = None
 
 
 class ProviderError(RuntimeError):
@@ -150,8 +175,11 @@ class LocalLLMProvider:
         self,
         messages: list[dict[str, Any]],
         *,
+        model: str | None = None,
         model_kind: str = "chat",
         temperature: float = 0.2,
+        top_p: float | None = None,
+        repeat_penalty: float | None = None,
         max_tokens: int | None = None,
         json_schema: dict | None = None,
         tools: list[dict] | None = None,
@@ -159,8 +187,10 @@ class LocalLLMProvider:
         step_id: str | None = None,
         purpose: str | None = None,
     ) -> ProviderResult:
-        model = self.code_model if model_kind == "code" else self.chat_model
+        model = model or (self.code_model if model_kind == "code" else self.chat_model)
         normalized_messages = _normalize_messages(messages)
+        schema = _normalize_json_schema(json_schema)
+        allow_generate_fallback = schema is None and not tools
         payload: dict[str, Any] = {
             "model": model,
             "messages": normalized_messages,
@@ -169,10 +199,13 @@ class LocalLLMProvider:
                 "temperature": temperature,
             },
         }
+        if top_p is not None:
+            payload["options"]["top_p"] = top_p
+        if repeat_penalty is not None:
+            payload["options"]["repeat_penalty"] = repeat_penalty
         if max_tokens is not None:
             payload["options"]["num_predict"] = int(max_tokens)
 
-        schema = _normalize_json_schema(json_schema)
         if schema:
             payload["format"] = schema
         if tools:
@@ -185,6 +218,16 @@ class LocalLLMProvider:
                 timeout=self.timeout_s,
             )
         except requests.RequestException as exc:
+            if allow_generate_fallback:
+                return self._generate(
+                    model=model,
+                    normalized_messages=normalized_messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    run_id=run_id,
+                    step_id=step_id,
+                    purpose=purpose,
+                )
             raise ProviderError(f"Local LLM request failed: {exc}", provider="local", error_type="connection_error") from exc
 
         if resp.status_code >= 500:
@@ -210,6 +253,16 @@ class LocalLLMProvider:
                     timeout=self.timeout_s,
                 )
             except requests.RequestException as exc:
+                if allow_generate_fallback:
+                    return self._generate(
+                        model=model,
+                        normalized_messages=normalized_messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        run_id=run_id,
+                        step_id=step_id,
+                        purpose=purpose,
+                    )
                 raise ProviderError(
                     f"Local LLM request failed: {exc}",
                     provider="local",
@@ -217,6 +270,16 @@ class LocalLLMProvider:
                     artifact_path=artifact_path,
                 ) from exc
             if retry_resp.status_code >= 400:
+                if retry_resp.status_code >= 500 and allow_generate_fallback:
+                    return self._generate(
+                        model=model,
+                        normalized_messages=normalized_messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        run_id=run_id,
+                        step_id=step_id,
+                        purpose=purpose,
+                    )
                 error_text = _extract_error_text(retry_resp)
                 hint = _missing_model_hint(error_text)
                 retry_artifact = _write_failure_artifact(
@@ -244,6 +307,16 @@ class LocalLLMProvider:
             try:
                 data = retry_resp.json()
             except json.JSONDecodeError as exc:
+                if allow_generate_fallback:
+                    return self._generate(
+                        model=model,
+                        normalized_messages=normalized_messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        run_id=run_id,
+                        step_id=step_id,
+                        purpose=purpose,
+                    )
                 raise ProviderError(
                     "Local LLM returned invalid JSON",
                     provider="local",
@@ -259,7 +332,7 @@ class LocalLLMProvider:
                 "eval_count": data.get("eval_count"),
                 "total_duration": data.get("total_duration"),
             }
-            return ProviderResult(text=text, usage=usage, raw=data)
+            return ProviderResult(text=text, usage=usage, raw=data, model_id=model)
 
         if resp.status_code >= 400:
             error_text = _extract_error_text(resp)
@@ -290,6 +363,16 @@ class LocalLLMProvider:
         try:
             data = resp.json()
         except json.JSONDecodeError as exc:
+            if allow_generate_fallback:
+                return self._generate(
+                    model=model,
+                    normalized_messages=normalized_messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    run_id=run_id,
+                    step_id=step_id,
+                    purpose=purpose,
+                )
             raise ProviderError("Local LLM returned invalid JSON", provider="local", status_code=resp.status_code, error_type="invalid_json") from exc
 
         message = data.get("message") or {}
@@ -299,7 +382,73 @@ class LocalLLMProvider:
             "eval_count": data.get("eval_count"),
             "total_duration": data.get("total_duration"),
         }
-        return ProviderResult(text=text, usage=usage, raw=data)
+        return ProviderResult(text=text, usage=usage, raw=data, model_id=model)
+
+    def _generate(
+        self,
+        *,
+        model: str,
+        normalized_messages: list[dict[str, Any]],
+        temperature: float,
+        max_tokens: int | None,
+        run_id: str | None,
+        step_id: str | None,
+        purpose: str | None,
+    ) -> ProviderResult:
+        prompt = _messages_to_prompt(normalized_messages)
+        payload: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": temperature},
+        }
+        if max_tokens is not None:
+            payload["options"]["num_predict"] = int(max_tokens)
+        try:
+            resp = requests.post(
+                f"{self.base_url}/api/generate",
+                json=payload,
+                timeout=self.timeout_s,
+            )
+        except requests.RequestException as exc:
+            raise ProviderError(f"Local LLM request failed: {exc}", provider="local", error_type="connection_error") from exc
+
+        if resp.status_code >= 400:
+            error_text = _extract_error_text(resp)
+            hint = _missing_model_hint(error_text)
+            artifact_path = _write_failure_artifact(
+                payload=payload,
+                response_status=resp.status_code,
+                response_text=resp.text,
+                run_id=run_id,
+                step_id=step_id,
+                model=model,
+                purpose=purpose,
+                variant="generate_fallback",
+            )
+            message = f"Local LLM HTTP {resp.status_code}"
+            if error_text:
+                message = f"{message}: {error_text}"
+            if hint:
+                message = f"{message} {hint}"
+            raise ProviderError(
+                message,
+                provider="local",
+                status_code=resp.status_code,
+                error_type="model_not_found" if hint else "http_error",
+                artifact_path=artifact_path,
+            )
+        try:
+            data = resp.json()
+        except json.JSONDecodeError as exc:
+            raise ProviderError("Local LLM returned invalid JSON", provider="local", status_code=resp.status_code, error_type="invalid_json") from exc
+        text = data.get("response") or ""
+        usage = {
+            "prompt_eval_count": data.get("prompt_eval_count"),
+            "eval_count": data.get("eval_count"),
+            "total_duration": data.get("total_duration"),
+        }
+        return ProviderResult(text=text, usage=usage, raw=data, model_id=model)
 
 
 class CloudLLMProvider:
@@ -358,4 +507,4 @@ class CloudLLMProvider:
         if "choices" in data:
             text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         usage = data.get("usage")
-        return ProviderResult(text=text, usage=usage, raw=data)
+        return ProviderResult(text=text, usage=usage, raw=data, model_id=model)

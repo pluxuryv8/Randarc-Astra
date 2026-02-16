@@ -153,4 +153,4 @@ prompts         системные prompt-шаблоны
 - `docs/SECURITY.md`
 - `docs/DEVELOPMENT.md`
 
-Старые аналитические/статусные документы перенесены в `archive/docs_legacy/`.
+Исторические аналитические материалы лежат в `archive/`.
