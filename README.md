@@ -1,214 +1,157 @@
-# Randarc-Astra
+# Randarc Astra
 
-Локальная станция‑автопилот для задач за компьютером.
+Randarc Astra — локальный desktop-ассистент с UI на `Tauri + React` и API на `FastAPI`. Основной поток: создать run -> определить интент (`CHAT`, `ACT`, `ASK_CLARIFY`) -> либо вернуть текстовый ответ, либо построить/выполнить план шагов через skills -> стримить события в UI через SSE (`apps/api/routes/runs.py:465`, `core/intent_router.py:12`, `core/run_engine.py:24`, `apps/api/routes/run_events.py:15`).
 
-Randarc-Astra превращает запрос в управляемый процесс: планирует, исполняет шаги через экран/мышь/клавиатуру, фиксирует события и сохраняет результаты локально. Продукт ориентирован на macOS и работает как «станция», а не как чат.
+## Что работает по факту
 
-![Статус](https://img.shields.io/badge/статус-MVP-informational)
-![Платформа](https://img.shields.io/badge/платформа-macOS-black)
-![Тип](https://img.shields.io/badge/режим-local--first-4b8bbe)
+- Чат и интент-роутинг: `POST /api/v1/projects/{project_id}/runs` возвращает `kind=chat|act|clarify` (`apps/api/routes/runs.py:465`).
+- Память пользователя: API `GET/POST/DELETE /api/v1/memory/*` + сохранение через skill `memory_save` (`apps/api/routes/memory.py:20`, `core/planner.py:57`).
+- Reminders: API `GET/POST/DELETE /api/v1/reminders/*` + scheduler при старте API (`apps/api/routes/reminders.py:31`, `apps/api/main.py:46`, `core/reminders/scheduler.py:197`).
+- Web research: плановый `KIND_WEB_RESEARCH` -> skill `web_research` (`core/planner.py:25`, `core/planner.py:52`).
+- Autopilot/computer actions через desktop bridge (`core/planner.py:51`, `core/executor/computer_executor.py:163`, `apps/desktop/src-tauri/src/bridge.rs:127`).
+- Approval gate для рискованных шагов (`core/planner.py:62`, `core/run_engine.py:34`, `apps/api/routes/runs.py:939`).
+- SSE события для UI (`apps/api/routes/run_events.py:15`, `apps/desktop/src/shared/api/eventStream.ts:145`, `apps/desktop/src/shared/store/appStore.ts:85`).
 
-## Оглавление
-- [Что это](#что-это)
-- [Как выглядит (станция и оверлей)](#как-выглядит-станция-и-оверлей)
-- [Возможности](#возможности)
-- [Как пользоваться](#как-пользоваться)
-- [Безопасность](#безопасность)
-- [Архитектура](#архитектура)
-- [Skills](#skills)
-- [Локальные данные и приватность](#локальные-данные-и-приватность)
-- [Roadmap](#roadmap)
-- [Troubleshooting](#troubleshooting)
-- [Лицензии и third-party](#лицензии-и-third-party)
-- [FAQ](#faq)
+## Быстрый старт
 
-## Что это
-Randarc-Astra — локальная станция, которая запускает задания как «процессы» (Run), умеет показывать план, прогресс и журнал событий, а также сохраняет результаты в локальную память.
+### 1) Требования
 
-Ключевые папки проекта:
-- [apps/desktop](apps/desktop/) — Desktop‑клиент (Tauri + React) и оверлей.
-- [apps/api](apps/api/) — локальный API (FastAPI).
-- [core](core/) — ядро: Run/Plan/Task/Event и оркестрация.
-- [skills](skills/) — набор навыков.
-- [memory](memory/) — локальная база и поиск.
-- [schemas](schemas/) — JSON‑схемы контрактов.
-- [prompts](prompts/) — промты и шаблоны.
-- [docs](docs/) — документация.
-- [LEGAL](LEGAL/) — third‑party notices.
+- `node` (`scripts/run.sh:27`)
+- `cargo` (`scripts/run.sh:32`)
+- Python `3.11+` (`scripts/run.sh:38`, `scripts/run.sh:45`)
+- `tesseract` для OCR (`scripts/doctor.sh:82`, `core/executor/computer_executor.py:97`)
+- Ollama для local LLM (`core/brain/router.py:81`, `scripts/doctor.sh:108`)
 
-## Как выглядит (HUD‑оверлей)
-Единственный интерфейс — HUD‑оверлей поверх экрана. В режиме idle он показывает только название, приветствие и одно поле ввода. После запуска раскрывается и показывает текущий шаг, задачи, действия, подтверждения и журнал.
+### 2) Установка и запуск
 
-### Демо
-Пока нет встроенных скриншотов.
-- TODO: добавить изображения в `docs/media/`.
-- Планируемые файлы для вставки: `docs/media/overlay.png`, `docs/media/station.png`.
-
-Пример будущих вставок:
-- `![Оверлей](docs/media/overlay.png)`
-- `![Станция](docs/media/station.png)`
-
-## Возможности
-Работает сейчас:
-- Run/Plan/Task/Event модель с журналом событий.
-- Автопилот: цикл «экран → решение → действия → повтор».
-- HUD‑оверлей поверх экрана с целью, задачами, действиями и статусом.
-- Confirm Gate для опасных действий.
-- Локальные источники/факты/артефакты и сохранение в память.
-- Локальный API, рассчитанный на работу только на `127.0.0.1`.
-
-Планируется / TODO:
-- Более надёжная остановка при полях пароля/2FA (пока зависит от распознавания моделью).
-- Расширенный анализ контента (например, по аудио/медиа). Пока не реализовано.
-
-## Как пользоваться
-1. Открыть HUD Randarc-Astra.
-2. Ввести команду и нажать Enter.
-3. Наблюдать прогресс, подтверждать опасные действия при запросе.
-4. По завершении открыть артефакты результата через экспорт.
-
-Быстрый запуск (упрощённо, в терминале):
 ```bash
-./scripts/run.sh
-```
-
-Установка моделей (Ollama):
-```bash
-./scripts/models.sh install
-./scripts/run.sh
-./scripts/doctor.sh prereq
-```
-
-Запуск одной командой:
-```bash
+cp .env.example .env
 ./scripts/astra dev
-./scripts/astra status
-./scripts/astra doctor
+```
+
+Что делает `./scripts/astra dev`:
+
+- нормализует адреса API/Bridge (`scripts/astra:9`, `scripts/astra:11`),
+- запускает `./scripts/run.sh --background` (`scripts/astra:148`),
+- поднимает API (`uvicorn`) и desktop (`tauri dev`) (`scripts/run.sh:128`, `scripts/run.sh:142`),
+- проверяет порты API/Vite/Bridge (`scripts/astra:157`, `scripts/astra:159`).
+
+Остановка:
+
+```bash
 ./scripts/astra stop
 ```
 
-Остановка:
+### 3) Проверка, что всё поднялось
+
 ```bash
-./scripts/stop.sh
+./scripts/astra status
+./scripts/doctor.sh prereq
+./scripts/doctor.sh runtime
 ```
 
-Запуск в фоне (без терминала):
+`doctor runtime` проверяет порты, `/auth/status`, создание проекта/run и SSE (`scripts/doctor.sh:207`, `scripts/doctor.sh:286`, `scripts/doctor.sh:315`, `scripts/doctor.sh:341`).
+
+## Порты и URL
+
+| Что | По умолчанию | Источник |
+|---|---|---|
+| API base | `http://127.0.0.1:8055/api/v1` | `scripts/lib/address_config.sh:6` |
+| API port | `8055` | `scripts/lib/address_config.sh:4` |
+| Bridge base | `http://127.0.0.1:43124` | `scripts/lib/address_config.sh:7` |
+| Bridge port | `43124` | `scripts/lib/address_config.sh:5` |
+| Vite dev server | `5173` | `scripts/run.sh:78`, `apps/desktop/src-tauri/tauri.conf.json:4` |
+| Ollama | `http://127.0.0.1:11434` | `core/brain/router.py:81` |
+
+## Конфигурация (ключевые ENV)
+
+Полная таблица: `docs/CONFIG.md`.
+
+| Переменная | Назначение | Дефолт | Где используется |
+|---|---|---|---|
+| `ASTRA_API_BASE_URL` | База API (`/api/v1`) | `http://127.0.0.1:8055/api/v1` | `scripts/lib/address_config.sh:59` |
+| `ASTRA_API_PORT` | Порт API | `8055` | `scripts/lib/address_config.sh:69` |
+| `ASTRA_BRIDGE_BASE_URL` | База desktop bridge | `http://127.0.0.1:43124` | `scripts/lib/address_config.sh:82` |
+| `ASTRA_BRIDGE_PORT` | Порт bridge | `43124` | `scripts/lib/address_config.sh:92` |
+| `VITE_ASTRA_API_BASE_URL` | API base для desktop UI | берётся из `ASTRA_API_BASE_URL` | `scripts/lib/address_config.sh:155`, `apps/desktop/src/shared/api/config.ts:45` |
+| `VITE_ASTRA_BRIDGE_BASE_URL` | Bridge base для desktop UI | берётся из `ASTRA_BRIDGE_BASE_URL` | `scripts/lib/address_config.sh:156`, `apps/desktop/src/shared/api/config.ts:53` |
+| `ASTRA_BASE_DIR` | Базовая директория API | repo root | `apps/api/config.py:16` |
+| `ASTRA_DATA_DIR` | Директория данных (`.astra`) | `<ASTRA_BASE_DIR>/.astra` | `apps/api/config.py:17` |
+| `ASTRA_AUTH_MODE` | `local` или `strict` | `local` | `apps/api/auth.py:20` |
+| `ASTRA_LLM_LOCAL_BASE_URL` | URL локальной LLM | `http://127.0.0.1:11434` | `core/brain/router.py:81` |
+| `ASTRA_LLM_LOCAL_CHAT_MODEL` | локальная chat модель | `qwen2.5:7b-instruct` | `core/brain/router.py:82` |
+| `ASTRA_CLOUD_ENABLED` | разрешить cloud-route | `false` | `core/brain/router.py:76` |
+| `ASTRA_AUTO_CLOUD_ENABLED` | автопереход в cloud | `false` | `core/brain/router.py:97` |
+| `OPENAI_API_KEY` | ключ cloud провайдера | отсутствует | `core/brain/router.py:75` |
+| `ASTRA_REMINDERS_ENABLED` | включить scheduler reminders | `true` | `core/reminders/scheduler.py:135` |
+| `ASTRA_TIMEZONE` | TZ для reminders | системная TZ, fallback UTC | `core/reminders/scheduler.py:63` |
+
+## Примеры использования
+
+### Минимальный API smoke (local auth)
+
 ```bash
-./scripts/run.sh --background
+# 1) создать проект
+curl -sS -X POST http://127.0.0.1:8055/api/v1/projects \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"quickstart","tags":[],"settings":{}}'
+
+# 2) создать run
+curl -sS -X POST http://127.0.0.1:8055/api/v1/projects/<project_id>/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"query_text":"Запомни, что я люблю короткие ответы","mode":"plan_only"}'
 ```
 
-Автостарт при входе в систему:
+Контракты endpoint'ов: `docs/API.md`.
+
+### Тесты и линт
+
 ```bash
-./scripts/install_launchd.sh
+python3 -m pytest -q
+npm --prefix apps/desktop run test
+npm --prefix apps/desktop run lint
 ```
-
-Удалить автостарт:
-```bash
-./scripts/uninstall_launchd.sh
-```
-
-Открыть настройки разрешений macOS:
-```bash
-./scripts/permissions.sh
-```
-
-Технические детали и настройки — в [docs](docs/).
-
-## Безопасность
-- Confirm Gate блокирует опасные действия до ручного подтверждения.
-- Команда «Стоп» и глобальная горячая клавиша (Cmd+Shift+S) доступны в оверлее.
-- Все действия логируются в событиях.
-- Для управления экраном требуются разрешения macOS: Screen Recording и Accessibility.
-
-## Архитектура
-### Поток выполнения
-```mermaid
-flowchart LR
-  Run[Run] --> Plan[Plan]
-  Plan --> Tasks[Tasks]
-  Tasks --> Events[Events]
-  Events --> S[SOURCES]
-  Events --> F[FACTS]
-  Events --> A[ARTIFACTS]
-  S --> Memory[Memory]
-  F --> Memory
-  A --> Memory
-```
-
-### Компоненты
-```mermaid
-graph LR
-  Desktop[Desktop UI + Overlay] <--> API[Local API]
-  API <--> Core[Core Engine]
-  Core <--> Skills[Skills]
-  Core <--> Memory[Local Memory]
-```
-
-Короткое описание:
-- Desktop управляет UX, оверлеем и подтверждениями.
-- API связывает интерфейс с ядром и навыками.
-- Core держит модель Run/Plan/Task/Event и оркестрацию.
-- Skills выполняют конкретные операции.
-- Memory хранит результаты локально.
-
-## Skills
-| Skill | Назначение | Требует подтверждения |
-| --- | --- | --- |
-| `autopilot_computer` | Автопилот управления компьютером | да (Confirm Gate внутри) |
-| `web_research` | Поиск источников | нет |
-| `extract_facts` | Извлечение фактов | нет |
-| `conflict_scan` | Поиск конфликтов | нет |
-| `report` | Сбор отчёта | нет |
-| `memory_save` | Сохранение результатов в память | нет |
-| `computer` | Управление ОС | да |
-| `shell` | Команды оболочки | да |
-
-## Локальные данные и приватность
-- База данных: `.astra/astra.db` (SQLite).
-- Шифрованное хранилище секретов: `.astra/vault.bin`.
-- Артефакты запусков: `artifacts/<run_id>/`.
-
-Данные остаются локально. Удаление папок `.astra/` и `artifacts/` очищает историю и результаты.
-
-## Roadmap
-Ближайшее:
-- Улучшение устойчивости автопилота в реальных приложениях. TODO.
-- Качественная библиотека демо‑медиа в `docs/media/`. TODO.
-
-Потом:
-- Аудио‑интерфейс (STT/TTS). Пока не реализовано.
-- Расширенная семантическая память. Пока не реализовано.
 
 ## Troubleshooting
-- Оверлей не кликается или не управляет мышью: проверь разрешение Accessibility.
-- Нет скриншота: проверь разрешение Screen Recording.
-- Оверлей не поверх окон: закрой и перезапусти desktop‑приложение.
-- Автопилот не действует: проверь, что Confirm Gate не ждёт подтверждения.
 
-## Лицензии и third-party
-См. [LEGAL/THIRD_PARTY_NOTICES.md](LEGAL/THIRD_PARTY_NOTICES.md).
+Коротко:
 
-## FAQ
-**Это облачный сервис?**
-Нет, сейчас это локальная станция. Облачный режим не реализован.
+- `Missing VITE_ASTRA_API_BASE_URL`/`VITE_ASTRA_BRIDGE_BASE_URL` — UI не получил адреса (`apps/desktop/src/shared/api/config.ts:47`, `apps/desktop/src/shared/api/config.ts:55`).
+- `Address mismatch ...` — конфликт `ASTRA_*` и `VITE_*` (`scripts/lib/address_config.sh:146`, `scripts/lib/address_config.sh:150`).
+- `Ollama not reachable` — проверка в doctor (`scripts/doctor.sh:108`).
+- `401 invalid_token` в strict-режиме — см. auth flow (`apps/api/auth.py:104`, `apps/api/auth.py:110`).
 
-**Можно ли запускать без LLM‑провайдера?**
-Да, часть навыков работает локально, но автопилот требует LLM для принятия решений.
+Подробно: `docs/TROUBLESHOOTING.md`.
 
-**Какие ОС поддерживаются?**
-На данный момент рабочий режим рассчитан на macOS.
+## Структура репозитория
 
-**Где лежат мои данные?**
-В `.astra/` и `artifacts/` в корне проекта.
+```text
+apps/api        FastAPI + маршруты
+apps/desktop    Tauri + React desktop UI
+core            planner/brain/executor/reminders/safety
+memory          SQLite store + migrations
+skills          skills и манифесты
+scripts         запуск/диагностика/smoke
+prompts         системные prompt-шаблоны
+```
 
-**Почему автопилот не кликает по экрану?**
-Чаще всего причина — нет разрешения Accessibility.
+## Безопасность
 
-**Как остановить автопилот?**
-Через кнопку «Стоп» или Cmd+Shift+S.
+- В `ASTRA_AUTH_MODE=local` loopback-клиенты проходят без bearer (`apps/api/auth.py:78`, `apps/api/auth.py:83`).
+- В `ASTRA_AUTH_MODE=strict` токен обязателен (`apps/api/auth.py:104`).
+- Session token хранится в `ASTRA_DATA_DIR/auth.token` (`apps/api/auth.py:37`, `apps/api/auth.py:52`).
+- Desktop bridge слушает локальный HTTP и открывает OS-control endpoint'ы (`apps/desktop/src-tauri/src/bridge.rs:107`, `apps/desktop/src-tauri/src/bridge.rs:127`).
+- CORS bridge сейчас `*` (`apps/desktop/src-tauri/src/bridge.rs:145`).
 
-**Можно ли отключить Confirm Gate?**
-Нет, механизм подтверждения обязателен для опасных действий.
+Подробно: `docs/SECURITY.md`.
 
-**Есть ли встроенные скриншоты?**
-Пока нет. Планируются в `docs/media/`.
+## Актуальные документы
+
+- `docs/CONFIG.md`
+- `docs/API.md`
+- `docs/ARCHITECTURE.md`
+- `docs/TROUBLESHOOTING.md`
+- `docs/SECURITY.md`
+- `docs/DEVELOPMENT.md`
+
+Старые аналитические/статусные документы перенесены в `archive/docs_legacy/`.

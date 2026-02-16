@@ -1,59 +1,69 @@
-# Архитектура Randarc-Astra
+# Architecture (Current State)
 
-EN kept: названия технологий/стандартов (API, HTTP, SSE, Tauri, React, JSON) оставлены на английском как общепринятые.
+## Components
 
-## Картина в целом
+- Desktop UI: `apps/desktop` (`Tauri + React`) (`apps/desktop/package.json:1`, `apps/desktop/src-tauri/tauri.conf.json:1`).
+- API: `apps/api` (`FastAPI`) (`apps/api/main.py:24`).
+- Core orchestration: planner/engine/skills in `core/` (`core/planner.py:22`, `core/run_engine.py:16`).
+- Persistent state: SQLite store + migrations in `memory/` (`memory/store.py:20`, `memory/db.py:63`).
+- Executable skills: `skills/*` + manifests (`core/skills/registry.py:31`, `skills/registry/registry.json:1`).
 
-Astra устроена как локальная станция:
+## Main Runtime Flow
 
-- Десктоп‑интерфейс (Tauri/React) — основное окно и overlay.
-- Локальный API (FastAPI) — планы, задачи, события, память.
-- Автопилот (Tauri) — скриншоты, мышь, клавиатура, быстрый цикл.
-- Навыки (Python) — логика исполнения и LLM‑контур.
+1. Desktop sends request to API: `POST /api/v1/projects/{project_id}/runs` (`apps/api/routes/runs.py:465`).
+2. API decides intent (`CHAT`, `ACT`, `ASK_CLARIFY`) via `IntentRouter` + semantic layer (`apps/api/routes/runs.py:492`, `core/intent_router.py:87`).
+3. `CHAT`: return `chat_response` (with fallback on LLM failures) (`apps/api/routes/runs.py:662`, `apps/api/routes/runs.py:733`).
+4. `ACT`: create plan and run skills (`apps/api/routes/runs.py:652`, `core/run_engine.py:24`, `core/run_engine.py:164`).
+5. Events are persisted and streamed to UI through SSE (`memory/store.py:1421`, `apps/api/routes/run_events.py:15`, `apps/desktop/src/shared/api/eventStream.ts:145`).
 
-## Автопилотный цикл
+## Planning and Skills
 
-Основной режим — Computer Vision Loop:
+Plan kinds and mapping to skills are hardcoded in planner:
 
-1. Снимок экрана (downscale + JPEG).
-2. Запрос к модели с целью и контекстом.
-3. Ответ в виде JSON‑протокола действий.
-4. Выполнение действий мышью/клавиатурой.
-5. Запись событий и повтор цикла.
+- `WEB_RESEARCH` -> `web_research`
+- `MEMORY_COMMIT` -> `memory_save`
+- `REMINDER_CREATE` -> `reminder_create`
+- `BROWSER_RESEARCH_UI`/`COMPUTER_ACTIONS`/`DOCUMENT_WRITE`/`FILE_ORGANIZE`/`CODE_ASSIST` -> `autopilot_computer`
 
-## Overlay
+Source: `core/planner.py:22`, `core/planner.py:48`.
 
-Отдельное прозрачное окно поверх экрана показывает:
+Run execution lifecycle: `created -> running -> done/failed/canceled/paused` (`core/run_engine.py:56`, `core/run_engine.py:63`, `core/run_engine.py:79`, `core/run_engine.py:82`).
 
-- цель и план,
-- текущий шаг и короткое объяснение,
-- последние действия,
-- статус (running/paused/needs_user/done),
-- кнопки Stop/Pause/Confirm/Reject.
+## API Surface (high level)
 
-## Событийное ядро
+Mounted routers: projects, runs, run_events, skills, artifacts, secrets, memory, reminders, auth (`apps/api/main.py:48`, `apps/api/main.py:56`).
 
-Источник истины — `Run` + `Events`.
-Интерфейс строит состояние из потока событий и/или снимка:
-`GET /api/v1/runs/{run_id}/snapshot`.
+Key endpoints:
 
-## Подтверждение (Confirm Gate)
+- projects: `apps/api/routes/projects.py:9`
+- runs + approvals: `apps/api/routes/runs.py:465`, `apps/api/routes/runs.py:939`
+- SSE: `apps/api/routes/run_events.py:15`
+- memory: `apps/api/routes/memory.py:11`
+- reminders: `apps/api/routes/reminders.py:12`
+- skills list/reload: `apps/api/routes/skills.py:7`
+- auth status/bootstrap: `apps/api/routes/auth.py:10`
 
-Опасные действия требуют подтверждения:
+## Desktop Bridge
 
-- создание/отправка/удаление,
-- платежи и переводы,
-- изменения аккаунтов,
-- системные команды.
+Bridge is a local HTTP server started by Tauri with endpoints:
 
-Подтверждения пишутся в БД и события.
+- `/computer/preview`, `/computer/execute`
+- `/shell/preview`, `/shell/execute`
+- `/autopilot/capture`, `/autopilot/act`, `/autopilot/permissions`
 
-## Десктоп‑мост
+Source: `apps/desktop/src-tauri/src/bridge.rs:111`, `apps/desktop/src-tauri/src/bridge.rs:127`.
 
-API общается с десктоп‑частью через локальный bridge на 127.0.0.1.
-Основные пути:
+Default bind is loopback on port `43124` unless overridden by env (`apps/desktop/src-tauri/src/bridge.rs:104`, `apps/desktop/src-tauri/src/bridge.rs:107`).
 
-- `POST /autopilot/capture`
-- `POST /autopilot/act`
-- `POST /computer/execute`
-- `POST /shell/execute`
+## Data and Storage
+
+- `ASTRA_BASE_DIR` / `ASTRA_DATA_DIR` define storage root (`apps/api/config.py:16`, `apps/api/config.py:17`).
+- DB file is `astra.db` in data dir (`memory/db.py:7`).
+- Migrations apply at startup (`memory/db.py:63`, `memory/db.py:66`).
+
+## Auth and Transport Modes
+
+- Auth modes: `local`, `strict` (`apps/api/auth.py:17`).
+- `local`: loopback exempt from bearer token (`apps/api/auth.py:78`, `apps/api/auth.py:83`).
+- `strict`: token required (`apps/api/auth.py:104`).
+- LLM route local/cloud with env policy flags (`core/brain/router.py:76`, `core/brain/router.py:97`, `core/brain/router.py:194`).
