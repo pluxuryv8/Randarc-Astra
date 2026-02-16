@@ -20,6 +20,14 @@ def _default_delivery() -> str:
     return "local"
 
 
+def _event_run_id(reminder: dict) -> str:
+    run_id = reminder.get("run_id")
+    if isinstance(run_id, str) and run_id.strip():
+        return run_id.strip()
+    reminder_id = str(reminder.get("id") or "unknown")
+    return f"reminder:{reminder_id}"
+
+
 @router.get("")
 def list_reminders(status: str | None = None, limit: int = 200):
     return store.list_reminders(status=status, limit=limit)
@@ -35,13 +43,12 @@ def create_reminder(payload: ReminderCreateRequest):
         run_id=payload.run_id,
         source=payload.source,
     )
-    if reminder.get("run_id"):
-        emit(
-            reminder["run_id"],
-            "reminder_created",
-            "Напоминание создано",
-            {"id": reminder["id"], "due_at": reminder["due_at"], "delivery": reminder["delivery"]},
-        )
+    emit(
+        _event_run_id(reminder),
+        "reminder_created",
+        "Напоминание создано",
+        {"id": reminder["id"], "due_at": reminder["due_at"], "delivery": reminder["delivery"], "run_id": reminder.get("run_id")},
+    )
     return reminder
 
 
@@ -50,6 +57,10 @@ def cancel_reminder(reminder_id: str):
     reminder = store.cancel_reminder(reminder_id)
     if not reminder:
         raise HTTPException(status_code=404, detail="Напоминание не найдено")
-    if reminder.get("run_id"):
-        emit(reminder["run_id"], "reminder_cancelled", "Напоминание отменено", {"id": reminder_id})
+    emit(
+        _event_run_id(reminder),
+        "reminder_cancelled",
+        "Напоминание отменено",
+        {"id": reminder_id, "run_id": reminder.get("run_id")},
+    )
     return reminder

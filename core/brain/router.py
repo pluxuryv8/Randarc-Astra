@@ -30,6 +30,7 @@ class BrainConfig:
     local_base_url: str
     local_chat_model: str
     local_code_model: str
+    local_timeout_s: int
     cloud_base_url: str
     cloud_model: str
     cloud_enabled: bool
@@ -58,18 +59,19 @@ class BrainConfig:
                 return default
 
         api_key = os.getenv("OPENAI_API_KEY") or get_secret("OPENAI_API_KEY")
-        cloud_enabled = _env_bool("ASTRA_CLOUD_ENABLED", True)
+        cloud_enabled = _env_bool("ASTRA_CLOUD_ENABLED", False)
         if not api_key:
             cloud_enabled = False
 
         return cls(
             local_base_url=os.getenv("ASTRA_LLM_LOCAL_BASE_URL", "http://127.0.0.1:11434"),
-            local_chat_model=os.getenv("ASTRA_LLM_LOCAL_CHAT_MODEL", "qwen2.5:3b-instruct"),
-            local_code_model=os.getenv("ASTRA_LLM_LOCAL_CODE_MODEL", "qwen2.5-coder:3b"),
+            local_chat_model=os.getenv("ASTRA_LLM_LOCAL_CHAT_MODEL", "saiga-nemo-12b"),
+            local_code_model=os.getenv("ASTRA_LLM_LOCAL_CODE_MODEL", "deepseek-coder-v2:16b-lite-instruct-q8_0"),
+            local_timeout_s=max(1, _env_int("ASTRA_LLM_LOCAL_TIMEOUT_S", 30) or 30),
             cloud_base_url=os.getenv("ASTRA_LLM_CLOUD_BASE_URL", "https://api.openai.com/v1"),
             cloud_model=os.getenv("ASTRA_LLM_CLOUD_MODEL", "gpt-4.1"),
             cloud_enabled=cloud_enabled,
-            auto_cloud_enabled=_env_bool("ASTRA_AUTO_CLOUD_ENABLED", True),
+            auto_cloud_enabled=_env_bool("ASTRA_AUTO_CLOUD_ENABLED", False),
             max_concurrency=_env_int("ASTRA_LLM_MAX_CONCURRENCY", 1) or 1,
             max_retries=_env_int("ASTRA_LLM_MAX_RETRIES", 3) or 0,
             backoff_base_ms=_env_int("ASTRA_LLM_BACKOFF_BASE_MS", 350) or 350,
@@ -388,6 +390,7 @@ class BrainRouter:
             self.config.local_base_url,
             self.config.local_chat_model,
             self.config.local_code_model,
+            timeout_s=self.config.local_timeout_s,
         )
         return provider.chat(
             messages,

@@ -12,10 +12,17 @@ from core.brain.types import LLMRequest
 from core.intent_router import INTENT_ACT, INTENT_ASK, INTENT_CHAT
 from core.llm_routing import ContextItem
 from core.reminders.parser import parse_reminder_text
+from core.semantic.intent_actions import (
+    collect_memory_facts,
+    extract_reminders,
+    extract_web_research,
+)
+from memory import store
 
 KIND_CHAT_RESPONSE = "CHAT_RESPONSE"
 KIND_CLARIFY = "CLARIFY_QUESTION"
 KIND_BROWSER_RESEARCH = "BROWSER_RESEARCH_UI"
+KIND_WEB_RESEARCH = "WEB_RESEARCH"
 KIND_COMPUTER_ACTIONS = "COMPUTER_ACTIONS"
 KIND_DOCUMENT_WRITE = "DOCUMENT_WRITE"
 KIND_FILE_ORGANIZE = "FILE_ORGANIZE"
@@ -28,6 +35,7 @@ ALL_KINDS = {
     KIND_CHAT_RESPONSE,
     KIND_CLARIFY,
     KIND_BROWSER_RESEARCH,
+    KIND_WEB_RESEARCH,
     KIND_COMPUTER_ACTIONS,
     KIND_DOCUMENT_WRITE,
     KIND_FILE_ORGANIZE,
@@ -41,6 +49,7 @@ KIND_TO_SKILL = {
     KIND_CHAT_RESPONSE: "report",
     KIND_CLARIFY: "report",
     KIND_BROWSER_RESEARCH: "autopilot_computer",
+    KIND_WEB_RESEARCH: "web_research",
     KIND_COMPUTER_ACTIONS: "autopilot_computer",
     KIND_DOCUMENT_WRITE: "autopilot_computer",
     KIND_FILE_ORGANIZE: "autopilot_computer",
@@ -59,14 +68,34 @@ DANGER_PATTERNS = {
     "password": ("парол", "password", "passphrase", "код подтверждения", "2fa", "one-time"),
 }
 
-MEMORY_TRIGGERS = ("запомни", "сохрани", "в память", "зафиксируй", "запиши")
-REMINDER_TRIGGERS = ("напомни", "напомнить", "напоминание")
+MEMORY_TRIGGERS = (
+    "сохрани в память",
+    "запиши себе",
+    "запомни",
+    "сохрани",
+    "в память",
+    "зафиксируй",
+    "запиши",
+)
+REMINDER_TRIGGERS = (
+    "поставь напоминание",
+    "сделай напоминание",
+    "напомни",
+    "напомнить",
+    "напоминание",
+)
+
+SEMANTIC_FACTS_LIMIT = 5
 
 
 def _is_qa_mode(meta: dict | None = None) -> bool:
     if meta and meta.get("qa_mode"):
         return True
     return os.getenv("ASTRA_QA_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _legacy_detectors_enabled() -> bool:
+    return os.getenv("ASTRA_LEGACY_DETECTORS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -106,7 +135,28 @@ def _id() -> str:
 
 
 def _normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", text.strip().lower())
+    normalized = text.strip().lower().replace("ё", "е")
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _get_semantic_actions(meta: dict | None) -> dict[str, list[dict]] | None:
+    if not meta:
+        return None
+    actions = meta.get("semantic_actions")
+    return actions if isinstance(actions, dict) else None
+
+
+def _semantic_used(meta: dict | None) -> bool:
+    if not meta:
+        return False
+    return bool(meta.get("semantic_used"))
+
+
+def _safe_list_memories() -> list[dict]:
+    try:
+        return store.list_user_memories(limit=200)
+    except Exception:
+        return []
 
 
 def _is_smoke_query(text: str) -> bool:
@@ -170,13 +220,17 @@ def _extract_memory_payload(text: str) -> dict[str, Any]:
     match_token = None
     for token in MEMORY_TRIGGERS:
         pos = lowered.find(token)
-        if pos != -1 and (match_pos is None or pos < match_pos):
+        if pos != -1 and (
+            match_pos is None
+            or pos < match_pos
+            or (pos == match_pos and match_token is not None and len(token) > len(match_token))
+        ):
             match_pos = pos
             match_token = token
     content = text
     if match_pos is not None and match_token is not None:
         content = text[match_pos + len(match_token) :]
-    content = re.sub(r"^[\\s:\\-—]+", "", content).strip()
+    content = re.sub(r"^[\\s,:;.!?\\-—]+", "", content).strip()
     if not content:
         content = re.sub(r"\\b(" + "|".join(map(re.escape, MEMORY_TRIGGERS)) + r")\\b", "", text, flags=re.IGNORECASE).strip()
     if not content:
@@ -192,6 +246,126 @@ def _extract_reminder_payload(text: str) -> dict[str, Any]:
     if not due_at or not reminder_text:
         return {}
     return {"due_at": due_at, "text": reminder_text}
+
+
+def _append_semantic_memory_step(raw_text: str, steps: list[PlanStep], actions: dict[str, list[dict]] | None) -> list[PlanStep]:
+    if not actions:
+        return steps
+    existing = _safe_list_memories()
+    facts = collect_memory_facts(actions, raw_text, existing, limit=SEMANTIC_FACTS_LIMIT)
+    if not facts:
+        return steps
+    payload = {"content": raw_text.strip(), "facts": facts, "origin": "auto"}
+    index = len(steps)
+    steps.append(
+        _step(
+            index,
+            "Сохранить факты о пользователе",
+            KIND_MEMORY_COMMIT,
+            payload,
+            "Факты сохранены в памяти",
+            depends_on=[index - 1] if index > 0 else [],
+            artifacts_expected=["memory"],
+        )
+    )
+    return steps
+
+
+def _plan_browser_research_for_query(query: str, sources_target: int | None, start_index: int = 0) -> list[PlanStep]:
+    sources_count = sources_target or 3
+    steps: list[PlanStep] = []
+    steps.append(
+        _step(
+            start_index,
+            "Открыть браузер",
+            KIND_BROWSER_RESEARCH,
+            _autopilot_inputs("Открой браузер и подготовься к поиску"),
+            "Открыт браузер и видна строка поиска",
+        )
+    )
+    steps.append(
+        _step(
+            start_index + 1,
+            "Найти источники",
+            KIND_BROWSER_RESEARCH,
+            _autopilot_inputs(f"Найди {sources_count} релевантных источника(ов) по запросу: {query}"),
+            f"Открыты минимум {sources_count} источника",
+            depends_on=[start_index],
+            artifacts_expected=["sources"],
+        )
+    )
+    steps.append(
+        _step(
+            start_index + 2,
+            "Сформировать краткую выжимку",
+            KIND_DOCUMENT_WRITE,
+            _autopilot_inputs("Сформируй краткую выжимку по найденным источникам"),
+            "Есть краткое резюме по источникам",
+            depends_on=[start_index + 1],
+            artifacts_expected=["summary"],
+        )
+    )
+    return steps
+
+
+def _plan_web_research_for_query(query: str, sources_target: int | None, start_index: int = 0) -> list[PlanStep]:
+    sources_count = sources_target if isinstance(sources_target, int) and sources_target > 0 else 2
+    max_sources = max(2, min(20, sources_count * 2))
+    max_pages = max(2, min(max_sources, sources_count + 2))
+    return [
+        _step(
+            start_index,
+            "Провести веб-ресёрч и собрать источники",
+            KIND_WEB_RESEARCH,
+            {
+                "query": query,
+                "mode": "deep",
+                "max_sources_total": max_sources,
+                "max_pages_fetch": max_pages,
+            },
+            f"Сформирован ответ минимум с {sources_count} источниками",
+            artifacts_expected=["sources", "web_research_answer_md"],
+        )
+    ]
+
+
+def _normalize_relative_time(text: str) -> str:
+    normalized = re.sub(r"\bчерез\s+час\b", "через 1 час", text, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bчерез\s+полчаса\b", "через 30 минут", normalized, flags=re.IGNORECASE)
+    return normalized
+
+
+def _build_steps_from_semantic(raw_text: str, actions: dict[str, list[dict]] | None) -> list[PlanStep]:
+    if not actions:
+        return []
+    steps: list[PlanStep] = []
+    reminders = extract_reminders(actions)
+    for item in reminders:
+        composed = " ".join(part for part in [item.get("when_text") or "", item.get("text") or ""] if part).strip()
+        source_text = _normalize_relative_time(composed or raw_text)
+        due_at, reminder_text, _ = parse_reminder_text(source_text)
+        if not due_at or not reminder_text:
+            continue
+        steps.append(
+            _step(
+                len(steps),
+                "Создать напоминание",
+                KIND_REMINDER_CREATE,
+                {"due_at": due_at, "text": reminder_text},
+                "Напоминание добавлено",
+                artifacts_expected=["reminder"],
+            )
+        )
+
+    web_items = extract_web_research(actions)
+    if web_items:
+        item = web_items[0]
+        query = item.get("query") or raw_text
+        sources_target = item.get("sources_target") if isinstance(item.get("sources_target"), int) else None
+        start_index = len(steps)
+        steps.extend(_plan_web_research_for_query(query, sources_target, start_index=start_index))
+
+    return steps
 
 
 def _step(
@@ -462,9 +636,10 @@ def _plan_obsidian_migrate(text: str) -> list[PlanStep] | None:
 
 
 def _plan_browser_research(text: str) -> list[PlanStep] | None:
-    if "найди" not in text and "источ" not in text and "поиск" not in text:
-        return None
-    if not any(token in text for token in ("браузер", "интернет", "гугл", "яндекс", "источ", "google", "yandex")):
+    has_search_verb = any(token in text for token in ("найди", "поищи", "загугли"))
+    has_search_noun = any(token in text for token in ("поиск", "источ"))
+    has_context = any(token in text for token in ("браузер", "интернет", "гугл", "яндекс", "google", "yandex", "источ"))
+    if not (has_search_verb or (has_search_noun and has_context)):
         return None
 
     steps = []
@@ -609,6 +784,9 @@ def _sanitize_plan_inputs(steps: list[PlanStep], fallback_goal: str) -> None:
             content = raw.get("content") if isinstance(raw.get("content"), str) else ""
             title = raw.get("title") if isinstance(raw.get("title"), str) else ""
             tags = raw.get("tags") if isinstance(raw.get("tags"), list) else []
+            facts = raw.get("facts") if isinstance(raw.get("facts"), list) else []
+            memory_payload = raw.get("memory_payload") if isinstance(raw.get("memory_payload"), dict) else None
+            origin = raw.get("origin") if isinstance(raw.get("origin"), str) else ""
             if not content:
                 content = fallback_goal.strip() if isinstance(fallback_goal, str) else ""
             if not content:
@@ -618,6 +796,12 @@ def _sanitize_plan_inputs(steps: list[PlanStep], fallback_goal: str) -> None:
                 cleaned["title"] = title
             if tags:
                 cleaned["tags"] = tags
+            if facts:
+                cleaned["facts"] = [str(item).strip() for item in facts if isinstance(item, (str, int, float)) and str(item).strip()]
+            if memory_payload:
+                cleaned["memory_payload"] = memory_payload
+            if origin:
+                cleaned["origin"] = origin
             step.inputs = cleaned
         elif step.skill_name == "report":
             step.inputs = {}
@@ -750,8 +934,20 @@ def _llm_plan(text: str) -> list[PlanStep] | None:
     return steps or None
 
 
-def _build_steps_from_text(text_norm: str, raw_text: str, *, allow_llm: bool = True) -> list[PlanStep]:
-    if _needs_reminder(text_norm):
+def _build_steps_from_text(
+    text_norm: str,
+    raw_text: str,
+    *,
+    allow_llm: bool = True,
+    allow_memory: bool = True,
+    allow_reminder: bool = True,
+    allow_web: bool = True,
+) -> list[PlanStep]:
+    # Legacy detector path is disabled by default; semantic plan_hint is the main path.
+    if not _legacy_detectors_enabled():
+        return []
+
+    if allow_reminder and _needs_reminder(text_norm):
         payload = _extract_reminder_payload(raw_text)
         if payload:
             steps = [
@@ -766,7 +962,7 @@ def _build_steps_from_text(text_norm: str, raw_text: str, *, allow_llm: bool = T
             ]
             return steps
 
-    if any(text_norm.startswith(trigger) for trigger in MEMORY_TRIGGERS):
+    if allow_memory and any(text_norm.startswith(trigger) for trigger in MEMORY_TRIGGERS):
         steps: list[PlanStep] = []
         return _append_memory_step_if_needed(raw_text, steps)
 
@@ -776,7 +972,7 @@ def _build_steps_from_text(text_norm: str, raw_text: str, *, allow_llm: bool = T
         or _plan_vscode_review(text_norm)
         or _plan_code_project(text_norm)
         or _plan_obsidian_migrate(text_norm)
-        or _plan_browser_research(text_norm)
+        or (_plan_browser_research(text_norm) if allow_web else None)
         or _plan_document_write(text_norm)
     )
     if not plan:
@@ -834,6 +1030,163 @@ def _prepend_clarify_step(steps: list[PlanStep], questions: list[str]) -> list[P
     return new_steps
 
 
+def _get_plan_hint(meta: dict | None) -> list[str]:
+    if not isinstance(meta, dict):
+        return []
+    raw = meta.get("plan_hint")
+    if not isinstance(raw, list):
+        return []
+    hints: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item in ALL_KINDS and item not in hints:
+            hints.append(item)
+    return hints
+
+
+def _memory_payload_from_meta(query_text: str, meta: dict | None) -> dict[str, Any]:
+    interpretation = meta.get("memory_interpretation") if isinstance(meta, dict) and isinstance(meta.get("memory_interpretation"), dict) else None
+    if interpretation and interpretation.get("should_store") is True:
+        summary = interpretation.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            payload = {
+                "content": query_text.strip(),
+                "origin": "auto",
+                "memory_payload": {
+                    "title": interpretation.get("title") if isinstance(interpretation.get("title"), str) else "Профиль пользователя",
+                    "summary": summary.strip(),
+                    "confidence": interpretation.get("confidence"),
+                    "facts": interpretation.get("facts") if isinstance(interpretation.get("facts"), list) else [],
+                    "preferences": interpretation.get("preferences")
+                    if isinstance(interpretation.get("preferences"), list)
+                    else [],
+                    "possible_facts": interpretation.get("possible_facts")
+                    if isinstance(interpretation.get("possible_facts"), list)
+                    else [],
+                },
+            }
+            return payload
+
+    memory_item = meta.get("memory_item") if isinstance(meta, dict) and isinstance(meta.get("memory_item"), dict) else None
+    text = memory_item.get("text") if isinstance(memory_item, dict) else None
+    if isinstance(text, str) and text.strip():
+        return {"content": query_text.strip(), "facts": [text.strip()], "origin": "auto"}
+    raise RuntimeError("planner_memory_item_missing")
+
+
+def _generic_step_for_kind(kind: str, query_text: str, index: int) -> PlanStep:
+    title_map = {
+        KIND_COMPUTER_ACTIONS: "Выполнить действия на компьютере",
+        KIND_DOCUMENT_WRITE: "Подготовить документ",
+        KIND_FILE_ORGANIZE: "Организовать файлы",
+        KIND_CODE_ASSIST: "Помочь с кодом",
+    }
+    success_map = {
+        KIND_COMPUTER_ACTIONS: "Действия выполнены по запросу пользователя",
+        KIND_DOCUMENT_WRITE: "Документ подготовлен по запросу пользователя",
+        KIND_FILE_ORGANIZE: "Файлы организованы по запросу пользователя",
+        KIND_CODE_ASSIST: "Задача по коду выполнена",
+    }
+    goal = query_text.strip() or "Выполнить задачу пользователя"
+    return _step(
+        index,
+        title_map.get(kind, "Выполнить задачу"),
+        kind,
+        _autopilot_inputs(goal),
+        success_map.get(kind, "Шаг выполнен"),
+        depends_on=[index - 1] if index > 0 else [],
+    )
+
+
+def _build_steps_from_plan_hint(query_text: str, meta: dict | None) -> list[PlanStep]:
+    hints = _get_plan_hint(meta)
+    interpretation = meta.get("memory_interpretation") if isinstance(meta, dict) and isinstance(meta.get("memory_interpretation"), dict) else None
+    if interpretation and interpretation.get("should_store") is True and KIND_MEMORY_COMMIT not in hints:
+        hints.append(KIND_MEMORY_COMMIT)
+    if not hints:
+        hints = [KIND_COMPUTER_ACTIONS]
+
+    steps: list[PlanStep] = []
+    for kind in hints:
+        index = len(steps)
+        if kind == KIND_CHAT_RESPONSE:
+            steps.append(
+                _step(
+                    index,
+                    "Ответить пользователю текстом",
+                    KIND_CHAT_RESPONSE,
+                    {},
+                    "Сформирован текстовый ответ пользователю",
+                    depends_on=[index - 1] if index > 0 else [],
+                    artifacts_expected=["chat_response"],
+                )
+            )
+            continue
+
+        if kind == KIND_MEMORY_COMMIT:
+            steps.append(
+                _step(
+                    index,
+                    "Сохранить в память",
+                    KIND_MEMORY_COMMIT,
+                    _memory_payload_from_meta(query_text, meta),
+                    "Запись сохранена в памяти",
+                    depends_on=[index - 1] if index > 0 else [],
+                    artifacts_expected=["memory"],
+                )
+            )
+            continue
+
+        if kind == KIND_REMINDER_CREATE:
+            payload = _extract_reminder_payload(query_text)
+            if not payload:
+                raise RuntimeError("planner_reminder_payload_missing")
+            steps.append(
+                _step(
+                    index,
+                    "Создать напоминание",
+                    KIND_REMINDER_CREATE,
+                    payload,
+                    "Напоминание добавлено",
+                    depends_on=[index - 1] if index > 0 else [],
+                    artifacts_expected=["reminder"],
+                )
+            )
+            continue
+
+        if kind == KIND_BROWSER_RESEARCH:
+            steps.extend(_plan_browser_research_for_query(query_text, None, start_index=index))
+            continue
+
+        if kind == KIND_WEB_RESEARCH:
+            steps.extend(_plan_web_research_for_query(query_text, None, start_index=index))
+            continue
+
+        if kind == KIND_CLARIFY:
+            steps.append(
+                _step(
+                    index,
+                    "Уточнить детали у пользователя",
+                    KIND_CLARIFY,
+                    {"questions": ["Уточни, пожалуйста, детали запроса."]},
+                    "Получены уточнения от пользователя",
+                    depends_on=[index - 1] if index > 0 else [],
+                )
+            )
+            continue
+
+        if kind == KIND_SMOKE_RUN:
+            smoke_steps = _build_smoke_plan(query_text)
+            for smoke_step in smoke_steps:
+                smoke_step.step_index = len(steps)
+                smoke_step.depends_on = [smoke_step.step_index - 1] if smoke_step.step_index > 0 else []
+                steps.append(smoke_step)
+            continue
+
+        steps.append(_generic_step_for_kind(kind, query_text, index))
+
+    return steps
+
+
 def create_plan_for_run(run: dict) -> list[dict]:
     query_text = run.get("query_text", "")
     meta = run.get("meta") or {}
@@ -856,11 +1209,25 @@ def create_plan_for_run(run: dict) -> list[dict]:
                 artifacts_expected=["chat_response"],
             )
         ]
-        return [step.to_dict() for step in _append_memory_step_if_needed(query_text, steps)]
+        return [step.to_dict() for step in steps]
 
-    qa_mode = _is_qa_mode(meta)
-    steps = _build_steps_from_text(_normalize(query_text), query_text, allow_llm=not qa_mode)
-    steps = _append_memory_step_if_needed(query_text, steps)
+    hint_steps = _build_steps_from_plan_hint(query_text, meta)
+    plan_hints = _get_plan_hint(meta)
+    if _legacy_detectors_enabled() and not plan_hints:
+        text_norm = _normalize(query_text)
+        legacy_steps = _build_steps_from_text(text_norm, query_text)
+        steps = legacy_steps or hint_steps
+    else:
+        steps = hint_steps
+
+    raw_flags = meta.get("danger_flags") if isinstance(meta.get("danger_flags"), list) else None
+    danger_flags = _sanitize_danger_flags([str(flag) for flag in raw_flags]) if raw_flags is not None else _detect_danger_flags(_normalize(query_text))
+    _apply_danger_flags(steps, danger_flags)
+    for step in steps:
+        step.danger_flags = _sanitize_danger_flags(step.danger_flags)
+        step.requires_approval = bool(step.danger_flags)
+    _sanitize_plan_inputs(steps, query_text)
+
     if meta.get("needs_clarification") and meta.get("intent_questions"):
         steps = _prepend_clarify_step(steps, list(meta.get("intent_questions") or []))
     return [step.to_dict() for step in steps]

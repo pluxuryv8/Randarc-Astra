@@ -6,7 +6,8 @@
   "properties": {
     "provider": {"type": "string"},
     "model_id": {"type": ["string", "null"]},
-    "latency_ms": {"type": "integer"}
+    "latency_ms": {"type": "integer"},
+    "text": {"type": ["string", "null"]}
   },
   "required": ["provider", "latency_ms"],
   "additionalProperties": true

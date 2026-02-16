@@ -96,6 +96,25 @@ def _write_failure_artifact(
         return str(path)
 
 
+def _extract_error_text(resp: requests.Response) -> str | None:
+    try:
+        data = resp.json()
+        if isinstance(data, dict) and data.get("error"):
+            return str(data.get("error"))
+    except Exception:
+        return resp.text
+    return resp.text
+
+
+def _missing_model_hint(error_text: str | None) -> str | None:
+    if not error_text:
+        return None
+    lowered = error_text.lower()
+    if "model" in lowered and "not found" in lowered:
+        return "Model not found. Install via ./scripts/models.sh install."
+    return None
+
+
 @dataclass
 class ProviderResult:
     text: str
@@ -198,6 +217,8 @@ class LocalLLMProvider:
                     artifact_path=artifact_path,
                 ) from exc
             if retry_resp.status_code >= 400:
+                error_text = _extract_error_text(retry_resp)
+                hint = _missing_model_hint(error_text)
                 retry_artifact = _write_failure_artifact(
                     payload=simplified_payload,
                     response_status=retry_resp.status_code,
@@ -208,11 +229,16 @@ class LocalLLMProvider:
                     purpose=purpose,
                     variant="simplified",
                 )
+                message = f"Local LLM HTTP {retry_resp.status_code}"
+                if error_text:
+                    message = f"{message}: {error_text}"
+                if hint:
+                    message = f"{message} {hint}"
                 raise ProviderError(
-                    f"Local LLM HTTP {retry_resp.status_code}",
+                    message,
                     provider="local",
                     status_code=retry_resp.status_code,
-                    error_type="http_error",
+                    error_type="model_not_found" if hint else "http_error",
                     artifact_path=retry_artifact or artifact_path,
                 )
             try:
@@ -236,6 +262,8 @@ class LocalLLMProvider:
             return ProviderResult(text=text, usage=usage, raw=data)
 
         if resp.status_code >= 400:
+            error_text = _extract_error_text(resp)
+            hint = _missing_model_hint(error_text)
             artifact_path = _write_failure_artifact(
                 payload=payload,
                 response_status=resp.status_code,
@@ -246,11 +274,16 @@ class LocalLLMProvider:
                 purpose=purpose,
                 variant="primary",
             )
+            message = f"Local LLM HTTP {resp.status_code}"
+            if error_text:
+                message = f"{message}: {error_text}"
+            if hint:
+                message = f"{message} {hint}"
             raise ProviderError(
-                f"Local LLM HTTP {resp.status_code}",
+                message,
                 provider="local",
                 status_code=resp.status_code,
-                error_type="http_error",
+                error_type="model_not_found" if hint else "http_error",
                 artifact_path=artifact_path,
             )
 

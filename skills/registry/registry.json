@@ -60,7 +60,9 @@
         "network"
       ],
       "providers": [
-        "yandex"
+        "ddgs",
+        "yandex",
+        "stub"
       ],
       "scopes": "safe",
       "tests": null

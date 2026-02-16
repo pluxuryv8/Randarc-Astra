@@ -5,7 +5,13 @@
   "type": "object",
   "properties": {
     "query": {"type": "string"},
-    "urls": {"type": "array", "items": {"type": "string"}}
+    "urls": {"type": "array", "items": {"type": "string"}},
+    "mode": {"type": "string", "enum": ["candidates", "deep"]},
+    "max_rounds": {"type": "integer", "minimum": 1},
+    "max_sources_total": {"type": "integer", "minimum": 1},
+    "max_pages_fetch": {"type": "integer", "minimum": 1},
+    "depth": {"type": "string", "enum": ["brief", "normal", "deep"]},
+    "style_hint": {"type": "string"}
   },
   "required": [],
   "additionalProperties": false

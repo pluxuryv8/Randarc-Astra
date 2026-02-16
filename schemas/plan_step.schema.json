@@ -13,12 +13,15 @@
       "enum": [
         "CHAT_RESPONSE",
         "CLARIFY_QUESTION",
+        "WEB_RESEARCH",
         "BROWSER_RESEARCH_UI",
         "COMPUTER_ACTIONS",
         "DOCUMENT_WRITE",
         "FILE_ORGANIZE",
         "CODE_ASSIST",
-        "MEMORY_COMMIT"
+        "MEMORY_COMMIT",
+        "REMINDER_CREATE",
+        "SMOKE_RUN"
       ]
     },
     "skill_name": {"type": "string"},

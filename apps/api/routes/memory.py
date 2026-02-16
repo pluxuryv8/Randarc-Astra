@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from apps.api.auth import require_auth
 from apps.api.models import MemoryCreateRequest
 from core.event_bus import emit
+from core.memory_normalize import normalize_memory_texts
 from memory import store
 
 router = APIRouter(prefix="/api/v1/memory", tags=["memory"], dependencies=[Depends(require_auth)])
@@ -45,8 +46,14 @@ def create_memory(payload: MemoryCreateRequest):
         {"from": event_from, "preview_len": len(payload.content or "")},
     )
 
+    content = (payload.content or "").strip()
+    items = normalize_memory_texts(content)
+    if not items:
+        raise HTTPException(status_code=400, detail="Не удалось нормализовать запись памяти")
+
     try:
-        memory = store.create_user_memory(payload.title, payload.content, payload.tags, source=source)
+        # сохраняем только нормализованные факты
+        memory = store.create_user_memory(None, items[0], payload.tags, source=source)
     except ValueError as exc:
         message = str(exc)
         if message.startswith("content_too_long"):

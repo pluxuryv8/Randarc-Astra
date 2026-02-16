@@ -6,7 +6,61 @@
   "properties": {
     "title": { "type": "string" },
     "content": { "type": "string" },
-    "tags": { "type": "array", "items": { "type": "string" } }
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "facts": { "type": "array", "items": { "type": "string" } },
+    "origin": { "type": "string" },
+    "memory_payload": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "confidence": { "type": "number" },
+        "facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": { "type": "string" },
+              "value": { "type": "string" },
+              "confidence": { "type": "number" },
+              "evidence": { "type": "string" }
+            },
+            "required": ["key", "value", "confidence", "evidence"],
+            "additionalProperties": false
+          }
+        },
+        "preferences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": { "type": "string" },
+              "value": { "type": "string" },
+              "confidence": { "type": "number" },
+              "evidence": { "type": "string" }
+            },
+            "required": ["key", "value", "confidence"],
+            "additionalProperties": false
+          }
+        },
+        "possible_facts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": { "type": "string" },
+              "value": { "type": "string" },
+              "confidence": { "type": "number" },
+              "evidence": { "type": "string" }
+            },
+            "required": ["key", "value", "confidence", "evidence"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["summary"],
+      "additionalProperties": false
+    }
   },
   "required": ["content"],
   "additionalProperties": false

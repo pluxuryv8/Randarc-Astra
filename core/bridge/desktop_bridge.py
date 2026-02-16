@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
 
 class DesktopBridge:
     def __init__(self) -> None:
-        port = os.getenv("ASTRA_DESKTOP_BRIDGE_PORT", "43124")
-        self.base_url = f"http://127.0.0.1:{port}"
+        base_url = os.getenv("ASTRA_BRIDGE_BASE_URL")
+        if not base_url:
+            port = os.getenv("ASTRA_BRIDGE_PORT") or os.getenv("ASTRA_DESKTOP_BRIDGE_PORT", "43124")
+            base_url = f"http://127.0.0.1:{port}"
+        self.base_url = base_url.rstrip("/")
+        parsed = urlparse(self.base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise RuntimeError(f"Некорректный ASTRA_BRIDGE_BASE_URL: {self.base_url}")
 
     def computer_preview(self, actions: list[dict]) -> dict[str, Any]:
         return self._post("/computer/preview", {"actions": actions})

@@ -3,8 +3,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from apps.api.config import load_settings
 from apps.api.auth import ensure_session_token
+from apps.api.config import load_settings
 from apps.api.routes import (
     artifacts,
     auth,

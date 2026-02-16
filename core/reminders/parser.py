@@ -5,11 +5,27 @@ import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-_REMINDER_TRIGGERS = ("напомни", "напомнить", "напоминание")
+_REMINDER_TRIGGERS = (
+    "поставь напоминание",
+    "сделай напоминание",
+    "напомни",
+    "напомнить",
+    "напоминание",
+)
 
 
 def _get_timezone() -> ZoneInfo:
-    raw = os.getenv("ASTRA_TIMEZONE", "Russia").strip() or "Russia"
+    raw = os.getenv("ASTRA_TIMEZONE", "").strip()
+    if not raw:
+        local_tz = datetime.now().astimezone().tzinfo
+        if isinstance(local_tz, ZoneInfo):
+            return local_tz
+        if local_tz is not None:
+            try:
+                return ZoneInfo(str(local_tz))
+            except Exception:
+                return ZoneInfo("UTC")
+        return ZoneInfo("UTC")
     if raw.lower() in ("russia", "msk", "moscow"):
         return ZoneInfo("Europe/Moscow")
     try:
@@ -29,7 +45,7 @@ def _strip_reminder_phrase(text: str) -> str:
 
 
 def _clean_reminder_text(text: str) -> str:
-    cleaned = re.sub(r"^[\s:–—-]+", "", text).strip()
+    cleaned = re.sub(r"^[\s,:;.!?–—-]+", "", text).strip()
     cleaned = re.sub(r"^(а|про|о)\s+", "", cleaned, flags=re.IGNORECASE).strip()
     return cleaned
 
@@ -37,7 +53,7 @@ def _clean_reminder_text(text: str) -> str:
 def parse_reminder_text(text: str, now: datetime | None = None) -> tuple[str | None, str | None, str | None]:
     tz = _get_timezone()
     now_dt = now or _now_in_tz(tz)
-    normalized = re.sub(r"\s+", " ", text.strip().lower())
+    normalized = re.sub(r"\s+", " ", text.strip().lower().replace("ё", "е"))
 
     if not normalized:
         return None, None, "Когда напомнить?"
@@ -102,8 +118,27 @@ def parse_reminder_text(text: str, now: datetime | None = None) -> tuple[str | N
             return None, None, "Что именно нужно напомнить?"
         return _to_utc_iso(due_dt), reminder_text, None
 
-    if any(trigger in normalized for trigger in _REMINDER_TRIGGERS):
-        return None, None, "Когда напомнить?"
+    match_hour = re.search(r"\bв\s+(\d{1,2})\s*(час|часа|часов|ч)\b", normalized)
+    if match_hour:
+        hour = int(match_hour.group(1))
+        minute = 0
+        base_date = now_dt.date()
+        due_dt = datetime(
+            year=base_date.year,
+            month=base_date.month,
+            day=base_date.day,
+            hour=hour,
+            minute=minute,
+            tzinfo=tz,
+        )
+        if due_dt < now_dt:
+            due_dt = due_dt + timedelta(days=1)
+        reminder_text = _strip_reminder_phrase(text)
+        reminder_text = re.sub(match_hour.group(0), "", reminder_text, flags=re.IGNORECASE).strip()
+        reminder_text = _clean_reminder_text(reminder_text)
+        if not reminder_text:
+            return None, None, "Что именно нужно напомнить?"
+        return _to_utc_iso(due_dt), reminder_text, None
 
     return None, None, "Когда напомнить?"
 

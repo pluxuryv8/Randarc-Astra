@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/v1", tags=["events"])
 async def stream_events(run_id: str, request: Request):
     require_auth(request)
     run = store.get_run(run_id)
-    if not run:
+    if not run and not store.list_events(run_id, limit=1):
         raise HTTPException(status_code=404, detail="Запуск не найден")
 
     last_event_id = request.headers.get("Last-Event-ID") or request.query_params.get("last_event_id")
@@ -54,7 +54,7 @@ async def stream_events(run_id: str, request: Request):
 def download_events(run_id: str, request: Request):
     require_auth(request)
     run = store.get_run(run_id)
-    if not run:
+    if not run and not store.list_events(run_id, limit=1):
         raise HTTPException(status_code=404, detail="Запуск не найден")
     events = store.list_events(run_id, limit=5000)
     lines = "\n".join([json.dumps(e, ensure_ascii=False) for e in events])

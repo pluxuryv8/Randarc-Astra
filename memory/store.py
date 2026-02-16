@@ -92,7 +92,7 @@ def _infer_plan_step_kind(skill_name: str | None) -> str:
     if skill_name == "autopilot_computer":
         return "COMPUTER_ACTIONS"
     if skill_name == "web_research":
-        return "BROWSER_RESEARCH_UI"
+        return "WEB_RESEARCH"
     if skill_name == "report":
         return "DOCUMENT_WRITE"
     if skill_name == "extract_facts":
@@ -250,6 +250,20 @@ def get_run(run_id: str) -> Optional[dict]:
     }
 
 
+def update_run_meta_and_mode(run_id: str, *, mode: str, purpose: str | None, meta: dict | None) -> Optional[dict]:
+    run = get_run(run_id)
+    if not run:
+        return None
+    conn = _conn_or_raise()
+    with _lock:
+        conn.execute(
+            "UPDATE runs SET mode = ?, purpose = ?, meta = ? WHERE id = ?",
+            (mode, purpose, _json_dump(meta or {}), run_id),
+        )
+        conn.commit()
+    return get_run(run_id)
+
+
 def list_runs(project_id: str, limit: int = 50) -> list[dict]:
     conn = _conn_or_raise()
     limit = max(1, min(limit, 200))
@@ -273,6 +287,91 @@ def list_runs(project_id: str, limit: int = 50) -> list[dict]:
         }
         for row in rows
     ]
+
+
+def _is_chat_run(run: dict) -> bool:
+    meta = run.get("meta") or {}
+    if meta.get("intent") == "CHAT":
+        return True
+    return run.get("purpose") == "chat_only"
+
+
+def list_run_chain(run_id: str, limit: int = 200) -> list[dict]:
+    """Возвращает цепочку запусков от корня до указанного run_id."""
+    if not run_id:
+        return []
+    limit = max(1, min(limit, 500))
+    chain: list[dict] = []
+    seen: set[str] = set()
+    current_id: Optional[str] = run_id
+    while current_id and current_id not in seen and len(chain) < limit:
+        seen.add(current_id)
+        run = get_run(current_id)
+        if not run:
+            break
+        chain.append(run)
+        current_id = run.get("parent_run_id")
+    chain.reverse()
+    return chain
+
+
+def get_latest_event_by_type(run_id: str, event_type: str) -> Optional[dict]:
+    conn = _conn_or_raise()
+    row = conn.execute(
+        "SELECT rowid, * FROM events WHERE run_id = ? AND type = ? ORDER BY rowid DESC LIMIT 1",
+        (run_id, event_type),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "seq": row["rowid"],
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "ts": row["ts"],
+        "type": row["type"],
+        "level": row["level"],
+        "message": row["message"],
+        "payload": _json_load(row["payload"]) or {},
+        "task_id": row["task_id"],
+        "step_id": row["step_id"],
+    }
+
+
+def list_recent_chat_turns(anchor_run_id: str | None, limit_turns: int = 20) -> list[dict]:
+    """Возвращает историю чата (user/assistant) для цепочки запусков до anchor_run_id включительно."""
+    if not anchor_run_id:
+        return []
+    limit_turns = max(1, min(limit_turns, 100))
+    chain = list_run_chain(anchor_run_id, limit=limit_turns * 5)
+    chat_runs = [run for run in chain if _is_chat_run(run)]
+    if len(chat_runs) > limit_turns:
+        chat_runs = chat_runs[-limit_turns:]
+    history: list[dict] = []
+    for run in chat_runs:
+        user_text = run.get("query_text") or ""
+        if user_text:
+            history.append(
+                {
+                    "role": "user",
+                    "content": user_text,
+                    "ts": run.get("created_at"),
+                    "run_id": run.get("id"),
+                }
+            )
+        event = get_latest_event_by_type(run.get("id"), "chat_response_generated")
+        if event:
+            payload = event.get("payload") or {}
+            text = payload.get("text")
+            if text:
+                history.append(
+                    {
+                        "role": "assistant",
+                        "content": text,
+                        "ts": event.get("ts"),
+                        "run_id": run.get("id"),
+                    }
+                )
+    return history
 
 
 def create_reminder(
@@ -1095,7 +1194,13 @@ def search_memory(project_id: str, query: str, item_type: Optional[str] = None, 
     return filtered[:limit]
 
 
-def create_user_memory(title: Optional[str], content: str, tags: Optional[list[str]] = None, source: str = "user_command") -> dict:
+def create_user_memory(
+    title: Optional[str],
+    content: str,
+    tags: Optional[list[str]] = None,
+    source: str = "user_command",
+    meta: Optional[dict] = None,
+) -> dict:
     if not isinstance(content, str) or not content.strip():
         raise ValueError("content_required")
     limit = _memory_content_limit()
@@ -1117,8 +1222,8 @@ def create_user_memory(title: Optional[str], content: str, tags: Optional[list[s
     with _lock:
         conn.execute(
             """
-            INSERT INTO user_memories (id, created_at, updated_at, title, content, tags, source, is_deleted, pinned, last_used_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO user_memories (id, created_at, updated_at, title, content, tags, source, is_deleted, pinned, last_used_at, meta)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 memory_id,
@@ -1131,6 +1236,7 @@ def create_user_memory(title: Optional[str], content: str, tags: Optional[list[s
                 0,
                 0,
                 None,
+                _json_dump(meta or {}),
             ),
         )
         conn.commit()
@@ -1145,6 +1251,7 @@ def create_user_memory(title: Optional[str], content: str, tags: Optional[list[s
         "is_deleted": False,
         "pinned": False,
         "last_used_at": None,
+        "meta": meta or {},
     }
 
 
@@ -1188,6 +1295,7 @@ def list_user_memories(query: str | None = None, tag: str | None = None, limit: 
             "is_deleted": bool(r["is_deleted"]),
             "pinned": bool(r["pinned"]),
             "last_used_at": r["last_used_at"],
+            "meta": _json_load(r["meta"]) if "meta" in r.keys() else {},
         }
         for r in rows
     ]
@@ -1209,6 +1317,7 @@ def get_user_memory(memory_id: str) -> Optional[dict]:
         "is_deleted": bool(row["is_deleted"]),
         "pinned": bool(row["pinned"]),
         "last_used_at": row["last_used_at"],
+        "meta": _json_load(row["meta"]) if "meta" in row.keys() else {},
     }
 
 
