@@ -16,7 +16,7 @@ import {
   Layers
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "../shared/utils/cn";
 import Badge from "../shared/ui/Badge";
 import Button from "../shared/ui/Button";
@@ -32,6 +32,8 @@ export type ActivityPanelProps = {
   resizing: boolean;
   onToggle: () => void;
 };
+
+const STYLE_DEBUG_STORAGE_KEY = "astra.ui.debug.styleMeta";
 
 const statusTone: Record<ActivityStepStatus, "success" | "warn" | "muted" | "danger"> = {
   done: "success",
@@ -73,6 +75,11 @@ function eventTimeLabel(ts?: number): string {
   if (!ts) return "";
   const normalized = ts < 1e12 ? ts * 1000 : ts;
   return new Date(normalized).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function loadStyleDebugFlag() {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(STYLE_DEBUG_STORAGE_KEY) === "1";
 }
 
 function thoughtFromEvent(event: EventItem): ThoughtLine | null {
@@ -289,6 +296,7 @@ export default function ActivityPanel({ open, width, resizing, onToggle }: Activ
   const events = useAppStore((state) => state.events);
   const overlayOpen = useAppStore((state) => state.overlayOpen);
   const setOverlayOpen = useAppStore((state) => state.setOverlayOpen);
+  const [styleDebug, setStyleDebug] = useState(loadStyleDebugFlag);
 
   const phase = activity ? phaseLabel(activity.phase) : "Планирую";
   const pendingApproval = approvals.find((item) => item.status === "pending");
@@ -304,6 +312,23 @@ export default function ActivityPanel({ open, width, resizing, onToggle }: Activ
     const lines = filtered.map((event) => thoughtFromEvent(event)).filter((item): item is ThoughtLine => Boolean(item));
     return lines.slice(-18).reverse();
   }, [currentRun?.id, events]);
+  const selectedStyleMeta = useMemo(() => {
+    const runMeta = currentRun?.meta;
+    if (!runMeta || typeof runMeta !== "object") return null;
+    const raw = (runMeta as Record<string, unknown>).selected_response_style_meta;
+    if (!raw || typeof raw !== "object") return null;
+    const meta = raw as Record<string, unknown>;
+    const selectedStyle =
+      typeof meta.selected_style === "string" && meta.selected_style.trim() ? meta.selected_style.trim() : null;
+    const responseMode =
+      typeof meta.response_mode === "string" && meta.response_mode.trim() ? meta.response_mode.trim() : null;
+    const detailRequested = Boolean(meta.detail_requested);
+    const sources = Array.isArray(meta.sources)
+      ? meta.sources.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+    if (!selectedStyle && !responseMode && sources.length === 0) return null;
+    return { selectedStyle, responseMode, detailRequested, sources };
+  }, [currentRun?.meta]);
   const artifactPath = useMemo(() => {
     const payload = errorEvent?.payload;
     if (payload && typeof payload === "object" && "artifact_path" in payload) {
@@ -313,13 +338,27 @@ export default function ActivityPanel({ open, width, resizing, onToggle }: Activ
     return null;
   }, [errorEvent]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(STYLE_DEBUG_STORAGE_KEY, styleDebug ? "1" : "0");
+  }, [styleDebug]);
+
   return (
     <aside
       className={cn("activity-panel", { "is-hidden": !open, "is-resizing": resizing })}
       style={{ width }}
     >
       <div className="activity-header">
-        <div className="activity-title">Активность</div>
+        <div
+          className="activity-title"
+          onDoubleClick={(event) => {
+            if (!event.altKey) return;
+            setStyleDebug((prev) => !prev);
+          }}
+          title={styleDebug ? "Style debug: ON (Alt+DoubleClick чтобы выключить)" : undefined}
+        >
+          Активность
+        </div>
         <div className="activity-actions">
           <IconButton
             type="button"
@@ -384,6 +423,26 @@ export default function ActivityPanel({ open, width, resizing, onToggle }: Activ
                 {detailed ? "Подробно" : "Кратко"}
               </button>
             </div>
+
+            {styleDebug ? (
+              <div className="activity-debug">
+                <Badge tone="muted" size="sm">
+                  Style debug
+                </Badge>
+                {selectedStyleMeta ? (
+                  <div className="activity-debug-lines">
+                    {selectedStyleMeta.responseMode ? <div>mode: {selectedStyleMeta.responseMode}</div> : null}
+                    <div>detail_requested: {selectedStyleMeta.detailRequested ? "true" : "false"}</div>
+                    {selectedStyleMeta.sources.length ? (
+                      <div>sources: {selectedStyleMeta.sources.join(", ")}</div>
+                    ) : null}
+                    {selectedStyleMeta.selectedStyle ? <div>style: {selectedStyleMeta.selectedStyle}</div> : null}
+                  </div>
+                ) : (
+                  <div className="activity-debug-lines">style meta отсутствует для текущего run.</div>
+                )}
+              </div>
+            ) : null}
 
             {streamState !== "live" ? (
               <div className="activity-connection">

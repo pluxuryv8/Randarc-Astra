@@ -189,6 +189,9 @@ _TEMPLATE_MARKERS = (
     "базовый шаблон",
     "общий ответ",
 )
+_STYLE_VOICE_ANCHOR = (
+    "Сохраняй фирменный голос Astra: естественно, уверенно, по делу, без шаблонных ИИ-клише."
+)
 _TOXIC_TARGET_RE = re.compile(
     r"\b(ты|тебе|тебя|тобой|твой|твоя|you|you're|youre|your)\b",
     flags=re.IGNORECASE,
@@ -936,6 +939,18 @@ def _unique_style_hints(parts: list[str], *, limit: int = 5) -> list[str]:
     return unique
 
 
+def _as_micro_style_adjustment(hint: str | None) -> str | None:
+    compact = " ".join(str(hint or "").split()).strip()
+    if not compact:
+        return None
+    compact = _compact_text_for_context(compact, 220)
+    if compact.endswith("."):
+        compact = compact[:-1].strip()
+    if not compact:
+        return None
+    return f"Микро-подстройка под пользователя: {compact}."
+
+
 def _build_effective_response_style_hint(
     *,
     decision_style_hint: str | None,
@@ -945,24 +960,34 @@ def _build_effective_response_style_hint(
     query_text: str,
     tone_analysis: dict[str, Any] | None,
 ) -> str | None:
-    chunks: list[str] = []
+    chunks: list[str] = [_STYLE_VOICE_ANCHOR]
+    adaptation_chunks: list[str] = []
     if isinstance(decision_style_hint, str) and decision_style_hint.strip():
-        chunks.append(decision_style_hint)
+        adaptation_chunks.append(decision_style_hint)
     else:
         if isinstance(interpreted_style_hint, str) and interpreted_style_hint.strip():
-            chunks.append(interpreted_style_hint)
+            adaptation_chunks.append(interpreted_style_hint)
         profile_values = profile_style_hints if isinstance(profile_style_hints, list) else []
         if profile_values:
-            chunks.extend(str(item) for item in profile_values[:3] if isinstance(item, str) and item.strip())
+            adaptation_chunks.extend(
+                str(item) for item in profile_values[:3] if isinstance(item, str) and item.strip()
+            )
 
     if isinstance(tone_style_hint, str) and tone_style_hint.strip():
-        chunks.append(tone_style_hint)
+        adaptation_chunks.append(tone_style_hint)
 
     contextual_hint = _contextual_tone_adaptation_hint(query_text, tone_analysis)
-    if contextual_hint:
-        chunks.append(contextual_hint)
+    contextual_micro = _as_micro_style_adjustment(contextual_hint) if contextual_hint else None
+    if contextual_micro:
+        chunks.append(contextual_micro)
 
-    merged = _unique_style_hints(chunks, limit=5)
+    max_adapt = 2 if isinstance(decision_style_hint, str) and decision_style_hint.strip() else 3
+    for raw in _unique_style_hints(adaptation_chunks, limit=max_adapt):
+        micro = _as_micro_style_adjustment(raw)
+        if micro:
+            chunks.append(micro)
+
+    merged = _unique_style_hints(chunks, limit=6)
     if not merged:
         return None
     return " ".join(merged)
@@ -1656,7 +1681,20 @@ def _postprocess_user_visible_answer(text: str) -> str:
                         details_blocks = details_blocks[1:]
             details = [item for item in details_blocks if item]
             if summary and details:
-                final_main = f"Краткий итог: {summary}\n\nДетали:\n" + "\n\n".join(details)
+                structured_details = (
+                    len(details) >= 2
+                    or any("\n" in item for item in details)
+                    or any(len(item) >= 240 for item in details)
+                    or any(re.match(r"^(?:\d+[.)]\s+|- )", item) for item in details)
+                )
+                if structured_details:
+                    final_main = f"Краткий итог: {summary}\n\nДетали:\n" + "\n\n".join(details)
+                else:
+                    first_detail = details[0]
+                    if _normalize_for_dedupe(first_detail) == _normalize_for_dedupe(summary):
+                        final_main = summary
+                    else:
+                        final_main = f"{summary}\n\n{first_detail}"
             elif summary:
                 final_main = f"Краткий итог: {summary}"
             else:
@@ -2039,8 +2077,9 @@ def _format_web_research_sources(sources: list[SourceCandidate | dict[str, Any]]
             continue
         seen_urls.add(url)
         title = str(_source_value(item, "title") or "").strip()
-        label = title or url
-        lines.append(f"- {label} - {url}")
+        label = title or (_source_value(item, "domain") or url)
+        idx = len(lines) + 1
+        lines.append(f"[{idx}] [{label}]({url})")
         if len(lines) >= limit:
             break
     return "\n".join(lines)
@@ -2062,7 +2101,13 @@ def _normalize_web_source_lines(block: str, *, limit: int = 7) -> list[str]:
         if not url or url in seen_urls:
             continue
         seen_urls.add(url)
-        lines.append(line if line.startswith("- ") else f"- {line}")
+        if line.startswith("- "):
+            normalized = line
+        elif re.match(r"^\[[0-9]+\]\s+", line):
+            normalized = f"- {line}"
+        else:
+            normalized = f"- {line}"
+        lines.append(normalized)
         if len(lines) >= limit:
             break
     return lines
@@ -2084,6 +2129,9 @@ def _ensure_summary_details_layout(text: str) -> str:
     if compact.lower().startswith(summary.lower()):
         remainder = compact[len(summary) :].lstrip(" .:-")
     if remainder and _normalize_for_dedupe(remainder) != _normalize_for_dedupe(summary):
+        sentence_count = len(re.findall(r"[.!?…]+", compact))
+        if sentence_count <= 1 and len(remainder) <= 90 and "\n" not in remainder and remainder.count(".") <= 1:
+            return f"Краткий итог: {summary}"
         return f"Краткий итог: {summary}\n\nДетали:\n{remainder}"
     return f"Краткий итог: {summary}"
 

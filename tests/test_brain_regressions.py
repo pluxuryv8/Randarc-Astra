@@ -137,15 +137,15 @@ def test_regression_web_research_chat_text_sources_optional_when_absent(tmp_path
     assert "Источники:" not in text
 
 
-def test_smoke_anime_plot_query_produces_clean_final_text(tmp_path: Path) -> None:
-    query = "А сюжет хентая эйфория знаешь?"
+def test_smoke_noisy_web_answer_rebuilds_to_clean_generic_text(tmp_path: Path) -> None:
+    query = "Объясни в двух абзацах, как работает TLS handshake"
     answer_path = tmp_path / "web_answer_dirty.md"
     answer_path.write_text(
         (
             "百度百科: случайный мусор и обрывки текста...\n"
             "###!!!###\n"
-            "Сюжет Euphoria рассказывает о группе персонажей и их конфликте.\n"
-            "Финал ветвится на несколько арок, поэтому трактовки отличаются."
+            "TLS handshake согласует версии протокола, шифросюиты и параметры сессии.\n"
+            "После проверки сертификата стороны выводят общий секрет и переходят к шифрованному каналу."
         ),
         encoding="utf-8",
     )
@@ -160,8 +160,8 @@ def test_smoke_anime_plot_query_produces_clean_final_text(tmp_path: Path) -> Non
             )
         ],
         sources=[
-            SourceCandidate(url="https://example.org/euphoria-plot", title="Euphoria plot summary"),
-            SourceCandidate(url="https://example.org/euphoria-review", title="Euphoria review"),
+            SourceCandidate(url="https://example.org/tls-handshake", title="TLS handshake guide"),
+            SourceCandidate(url="https://example.org/tls-certs", title="TLS certificates overview"),
         ],
     )
 
@@ -177,8 +177,8 @@ def test_smoke_anime_plot_query_produces_clean_final_text(tmp_path: Path) -> Non
     assert "百度" not in clean
     assert re.search(r"[\u4e00-\u9fff]", clean) is None
     assert "Источники:" in clean
-    assert "Сюжет Euphoria" in clean
-    assert "https://example.org/euphoria-plot" in clean
+    assert "TLS handshake" in clean
+    assert "https://example.org/tls-handshake" in clean
 
 
 @pytest.mark.xfail(
