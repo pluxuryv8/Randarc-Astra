@@ -309,6 +309,33 @@ def test_auto_web_research_trigger_heuristics(monkeypatch):
     )
 
 
+def test_auto_web_research_skips_when_answer_is_relevant_and_structured(monkeypatch):
+    monkeypatch.setenv("ASTRA_CHAT_AUTO_WEB_RESEARCH_ENABLED", "true")
+    query = "Кто такой Кен Канеки?"
+    answer = (
+        "Краткий итог: Кен Канеки - главный герой манги и аниме Tokyo Ghoul.\n\n"
+        "Детали:\n"
+        "Он студент, чья жизнь меняется после встречи с гулем. "
+        "Дальше сюжет строится вокруг его конфликта между человеческой и гулей природой."
+    )
+
+    should_research, reason = runs_route._auto_web_research_decision(query, answer, error_type=None)
+
+    assert should_research is False
+    assert reason is None
+
+
+def test_auto_web_research_triggers_for_short_uncertain_answer(monkeypatch):
+    monkeypatch.setenv("ASTRA_CHAT_AUTO_WEB_RESEARCH_ENABLED", "true")
+    query = "Кто такой Кен Канеки?"
+    answer = "Не уверен, возможно это персонаж из аниме."
+
+    should_research, reason = runs_route._auto_web_research_decision(query, answer, error_type=None)
+
+    assert should_research is True
+    assert reason in {"uncertain_response", "off_topic"}
+
+
 def test_user_visible_answer_sanitizes_internal_reasoning():
     raw = (
         "<think>Проверяю источники и сравниваю версии.</think>\n"

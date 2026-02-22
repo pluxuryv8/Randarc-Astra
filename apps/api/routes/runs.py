@@ -1951,6 +1951,29 @@ def _is_uncertain_response(text: str) -> bool:
     return bool(_AUTO_WEB_RESEARCH_UNCERTAIN_RE.search(lowered))
 
 
+def _is_sufficient_information_answer(user_text: str, response_text: str, *, soft_retry_reason: str | None) -> bool:
+    answer = (response_text or "").strip()
+    if not answer:
+        return False
+    if soft_retry_reason is not None:
+        return False
+
+    focus_tokens = _query_focus_tokens(user_text, limit=8)
+    if focus_tokens:
+        overlap = _focus_overlap_count(focus_tokens, _relevance_tokens(answer))
+        min_overlap = 1 if len(focus_tokens) <= 3 else 2
+        if overlap < min_overlap:
+            return False
+
+    lowered = answer.lower()
+    has_structured_layout = lowered.startswith("краткий итог:") or "\n\nдетали:\n" in lowered
+    if len(answer) < 80 and not has_structured_layout:
+        return False
+    if _is_uncertain_response(answer) and not has_structured_layout:
+        return False
+    return True
+
+
 def _should_auto_web_research(user_text: str, response_text: str, *, error_type: str | None = None) -> bool:
     should_research, _ = _auto_web_research_decision(user_text, response_text, error_type=error_type)
     return should_research
@@ -1969,6 +1992,8 @@ def _auto_web_research_decision(user_text: str, response_text: str, *, error_typ
     soft_retry_reason = _soft_retry_reason(user_text, answer)
     if soft_retry_reason in {"off_topic", "ru_language_mismatch"}:
         return True, soft_retry_reason
+    if _is_sufficient_information_answer(user_text, answer, soft_retry_reason=soft_retry_reason):
+        return False, None
     if _is_uncertain_response(answer):
         return True, "uncertain_response"
     return False, None
