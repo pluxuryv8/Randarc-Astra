@@ -10,6 +10,7 @@ from core.agent import (
     analyze_tone,
     build_chat_system_prompt,
     build_tone_profile_memory_payload,
+    load_persona_modules,
     merge_memory_payloads,
 )
 
@@ -95,3 +96,19 @@ def test_tone_memory_payload_merges_into_existing_payload():
     assert merged is not None
     assert any(item.get("key") == "user.name" for item in merged["memory_payload"]["facts"])
     assert any(item.get("key") == "style.tone" for item in merged["memory_payload"]["preferences"])
+
+
+def test_persona_prompt_modules_share_style_contract():
+    persona = load_persona_modules()
+
+    for key in ("core_identity", "tone_pipeline", "variation_rules"):
+        block = persona[key]
+        assert "Shared Style Contract (v2)" in block
+        assert "full improvisation via self-reflection" in block
+        assert "step-by-step plan" in block
+        assert "direct answer" in block
+
+    assert "Creative-Deep" in persona["core_identity"]
+    assert "Steady" in persona["core_identity"]
+    assert "Нумерованные шаги `1..N` разрешены" in persona["variation_rules"]
+    assert "Tone pipeline не переопределяет response-mode" in persona["tone_pipeline"]
