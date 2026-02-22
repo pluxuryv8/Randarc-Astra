@@ -967,6 +967,56 @@ def _build_effective_response_style_hint(
     return " ".join(merged)
 
 
+def _build_selected_response_style_meta(
+    *,
+    decision_style_hint: str | None,
+    interpreted_style_hint: str | None,
+    tone_style_hint: str | None,
+    profile_style_hints: list[str] | None,
+    query_text: str,
+    tone_analysis: dict[str, Any] | None,
+    response_mode: str | None,
+) -> dict[str, Any]:
+    selected_style = _build_effective_response_style_hint(
+        decision_style_hint=decision_style_hint,
+        interpreted_style_hint=interpreted_style_hint,
+        tone_style_hint=tone_style_hint,
+        profile_style_hints=profile_style_hints,
+        query_text=query_text,
+        tone_analysis=tone_analysis,
+    )
+
+    sources: list[str] = []
+    if isinstance(decision_style_hint, str) and decision_style_hint.strip():
+        sources.append("intent_router")
+    else:
+        if isinstance(interpreted_style_hint, str) and interpreted_style_hint.strip():
+            sources.append("memory_interpreter")
+        if isinstance(profile_style_hints, list) and any(isinstance(item, str) and item.strip() for item in profile_style_hints):
+            sources.append("profile_memory")
+    if isinstance(tone_style_hint, str) and tone_style_hint.strip():
+        sources.append("tone_analysis")
+    if _contextual_tone_adaptation_hint(query_text, tone_analysis):
+        sources.append("contextual_adaptation")
+
+    unique_sources: list[str] = []
+    for item in sources:
+        if item not in unique_sources:
+            unique_sources.append(item)
+
+    selected_mode = (
+        response_mode
+        if response_mode in {_CHAT_RESPONSE_MODE_DIRECT, _CHAT_RESPONSE_MODE_PLAN}
+        else _CHAT_RESPONSE_MODE_DIRECT
+    )
+    return {
+        "selected_style": selected_style,
+        "sources": unique_sources,
+        "response_mode": selected_mode,
+        "detail_requested": _user_requested_detailed_answer(query_text, selected_mode),
+    }
+
+
 def _build_chat_system_prompt(
     memories: list[dict],
     response_style_hint: str | None,
@@ -2201,8 +2251,25 @@ def create_run(project_id: str, payload: RunCreate, request: Request):
     chat_response_mode_reason: str | None = None
     if decision.intent == INTENT_CHAT:
         chat_response_mode, chat_response_mode_reason = _select_chat_response_mode(payload.query_text)
+    selected_response_style_meta = _build_selected_response_style_meta(
+        decision_style_hint=decision.response_style_hint,
+        interpreted_style_hint=interpreted_style_hint,
+        tone_style_hint=tone_style_hint,
+        profile_style_hints=profile_style_hints,
+        query_text=payload.query_text,
+        tone_analysis=tone_analysis,
+        response_mode=chat_response_mode or _CHAT_RESPONSE_MODE_DIRECT,
+    )
+    selected_style_value = selected_response_style_meta.get("selected_style")
+    if isinstance(selected_style_value, str) and selected_style_value.strip():
+        effective_response_style_hint = selected_style_value
     runtime_metrics["chat_response_mode"] = chat_response_mode
     runtime_metrics["chat_response_mode_reason"] = chat_response_mode_reason
+    runtime_metrics["selected_response_style"] = selected_response_style_meta.get("selected_style")
+    runtime_metrics["selected_response_style_sources"] = list(selected_response_style_meta.get("sources") or [])
+    runtime_metrics["selected_response_style_detail_requested"] = bool(
+        selected_response_style_meta.get("detail_requested")
+    )
     interpreted_user_name = _name_from_interpretation(memory_interpretation)
     if not interpreted_user_name:
         profile_name = profile_context.get("user_name")
@@ -2248,6 +2315,7 @@ def create_run(project_id: str, payload: RunCreate, request: Request):
         "memory_interpretation": memory_interpretation,
         "memory_interpretation_error": memory_interpretation_error,
         "response_style_hint": effective_response_style_hint,
+        "selected_response_style_meta": selected_response_style_meta,
         "chat_response_mode": chat_response_mode,
         "chat_response_mode_reason": chat_response_mode_reason,
         "tone_analysis": tone_analysis,

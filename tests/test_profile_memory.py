@@ -165,6 +165,39 @@ def test_contextual_tone_adaptation_hint_is_none_for_neutral_smalltalk():
     assert hint is None
 
 
+def test_selected_response_style_meta_exposes_diagnostics_without_text_leak():
+    meta = runs_route._build_selected_response_style_meta(
+        decision_style_hint=None,
+        interpreted_style_hint="Стиль: дружелюбный и поддерживающий.",
+        tone_style_hint="Коротко валидируй состояние и сразу предложи конкретный план.",
+        profile_style_hints=["Отвечай коротко и по делу."],
+        query_text="Составь план с KPI и лимитами 100 и 200.",
+        tone_analysis={"type": "frustrated", "task_complex": True},
+        response_mode="direct_answer",
+    )
+
+    assert meta["response_mode"] == "direct_answer"
+    assert meta["detail_requested"] is False
+    assert "memory_interpreter" in meta["sources"]
+    assert "tone_analysis" in meta["sources"]
+    assert "contextual_adaptation" in meta["sources"]
+    assert isinstance(meta["selected_style"], str)
+    assert "не искажай факты" in str(meta["selected_style"]).lower()
+
+
+def test_selected_response_style_meta_marks_detailed_request():
+    meta = runs_route._build_selected_response_style_meta(
+        decision_style_hint=None,
+        interpreted_style_hint=None,
+        tone_style_hint=None,
+        profile_style_hints=[],
+        query_text="Сделай подробно и пошагово",
+        tone_analysis={"type": "neutral", "task_complex": False},
+        response_mode="direct_answer",
+    )
+    assert meta["detail_requested"] is True
+
+
 def test_chat_system_prompt_owner_direct_mode_toggle(monkeypatch):
     monkeypatch.setenv("ASTRA_OWNER_DIRECT_MODE", "true")
     prompt_direct = runs_route._build_chat_system_prompt([], None)

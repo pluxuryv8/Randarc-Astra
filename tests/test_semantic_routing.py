@@ -305,6 +305,11 @@ def test_chat_run_saves_memory_item(monkeypatch, tmp_path: Path):
     assert isinstance(runtime_metrics.get("context_memory_chars"), int)
     assert runtime_metrics.get("auto_web_research_triggered") is False
     assert isinstance(runtime_metrics.get("response_latency_ms"), int)
+    style_meta = (run_snapshot or {}).get("meta", {}).get("selected_response_style_meta", {})
+    assert style_meta.get("response_mode") == "direct_answer"
+    assert isinstance(style_meta.get("sources"), list)
+    assert "selected_style" in style_meta
+    assert isinstance(runtime_metrics.get("selected_response_style_sources"), list)
 
 
 def test_chat_run_with_null_memory_item_does_not_write_memory(monkeypatch, tmp_path: Path):
@@ -718,6 +723,9 @@ def test_complex_chat_query_switches_to_step_by_step_response_mode(monkeypatch, 
     runtime_metrics = (run_snapshot or {}).get("meta", {}).get("runtime_metrics", {})
     assert runtime_metrics.get("chat_response_mode") == "step_by_step_plan"
     assert runtime_metrics.get("chat_inference_profile") == "complex"
+    style_meta = (run_snapshot or {}).get("meta", {}).get("selected_response_style_meta", {})
+    assert style_meta.get("response_mode") == "step_by_step_plan"
+    assert style_meta.get("detail_requested") is True
 
     events = store.list_events(payload["run"]["id"], limit=60)
     chat_events = [item for item in events if item.get("type") == "chat_response_generated"]
