@@ -123,6 +123,48 @@ def test_style_hint_from_interpretation_maps_friendly_and_brief_preferences():
     assert "коротко" in hint.lower()
 
 
+def test_effective_response_style_hint_combines_preference_context_and_precision_guard():
+    hint = runs_route._build_effective_response_style_hint(
+        decision_style_hint=None,
+        interpreted_style_hint="Стиль: дружелюбный и поддерживающий.",
+        tone_style_hint="Коротко валидируй состояние и сразу предложи конкретный план.",
+        profile_style_hints=["Отвечай коротко и по делу."],
+        query_text="Составь SQL-план с лимитами 100 и 200 и метриками контроля.",
+        tone_analysis={"type": "frustrated", "task_complex": True},
+    )
+
+    assert hint is not None
+    lowered = hint.lower()
+    assert "дружелюбный" in lowered
+    assert "конкретный план" in lowered
+    assert "не искажай факты" in lowered
+
+
+def test_effective_response_style_hint_keeps_decision_priority_and_context_guard():
+    hint = runs_route._build_effective_response_style_hint(
+        decision_style_hint="Стиль ответа: формально и строго.",
+        interpreted_style_hint="Стиль: дружелюбный и поддерживающий.",
+        tone_style_hint=None,
+        profile_style_hints=["Отвечай коротко и по делу."],
+        query_text="Дай формулу и точные числа для расчета.",
+        tone_analysis={"type": "dry", "task_complex": False},
+    )
+
+    assert hint is not None
+    lowered = hint.lower()
+    assert "формально и строго" in lowered
+    assert "дружелюбный" not in lowered
+    assert "не искажай факты" in lowered
+
+
+def test_contextual_tone_adaptation_hint_is_none_for_neutral_smalltalk():
+    hint = runs_route._contextual_tone_adaptation_hint(
+        "привет, как дела",
+        {"type": "neutral", "task_complex": False},
+    )
+    assert hint is None
+
+
 def test_chat_system_prompt_owner_direct_mode_toggle(monkeypatch):
     monkeypatch.setenv("ASTRA_OWNER_DIRECT_MODE", "true")
     prompt_direct = runs_route._build_chat_system_prompt([], None)

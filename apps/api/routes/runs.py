@@ -84,6 +84,14 @@ _CONSTRAINT_HINT_RE = re.compile(
     r")\b",
     flags=re.IGNORECASE,
 )
+_PRECISION_CRITICAL_QUERY_RE = re.compile(
+    r"\b("
+    r"формул\w*|formula\w*|числ\w*|number\w*|процент\w*|percent\w*|дата\w*|date\w*|время\w*|time\w*|"
+    r"метрик\w*|metric\w*|kpi\w*|sql|regex|команд\w*|command\w*|верси\w*|version\w*|лимит\w*|limit\w*|"
+    r"токен\w*|token\w*|бюджет\w*|budget\w*"
+    r")\b",
+    flags=re.IGNORECASE,
+)
 _AUTO_WEB_RESEARCH_INFO_QUERY_RE = re.compile(
     r"\b("
     r"кто|что|где|когда|почему|зачем|как|сколько|какой|какая|какие|чей|чья|чьи|"
@@ -860,6 +868,81 @@ def _style_hint_from_tone_analysis(tone_analysis: dict[str, Any] | None) -> str 
     if mirror_level == "low":
         return "Формально и точно, минимум разговорных вставок."
     return None
+
+
+def _contextual_tone_adaptation_hint(query_text: str, tone_analysis: dict[str, Any] | None) -> str | None:
+    if not isinstance(tone_analysis, dict):
+        return None
+    tone_type = str(tone_analysis.get("type") or "").strip().lower()
+    hints: list[str] = []
+
+    if tone_type in {"frustrated", "crisis"}:
+        hints.append("Контекстный стиль: спокойный поддерживающий тон и сразу практические действия.")
+    elif tone_type == "tired":
+        hints.append("Контекстный стиль: мягкая компактная подача без перегруза.")
+    elif tone_type == "energetic":
+        hints.append("Контекстный стиль: быстрый ритм и деловая конкретика.")
+    elif tone_type == "dry":
+        hints.append("Контекстный стиль: строгая деловая подача и короткая структура.")
+    elif tone_type == "reflective":
+        hints.append("Контекстный стиль: вдумчивая подача с чёткими выводами.")
+
+    precision_critical = bool(tone_analysis.get("task_complex")) or bool(_PRECISION_CRITICAL_QUERY_RE.search(query_text or ""))
+    if precision_critical:
+        hints.append("При адаптации тона не искажай факты, числа, имена, команды и ограничения запроса.")
+
+    if not hints:
+        return None
+    return " ".join(hints[:2])
+
+
+def _unique_style_hints(parts: list[str], *, limit: int = 5) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for raw in parts:
+        text = " ".join(str(raw or "").split()).strip()
+        if not text:
+            continue
+        signature = text.lower()
+        if signature in seen:
+            continue
+        seen.add(signature)
+        unique.append(text)
+        if len(unique) >= limit:
+            break
+    return unique
+
+
+def _build_effective_response_style_hint(
+    *,
+    decision_style_hint: str | None,
+    interpreted_style_hint: str | None,
+    tone_style_hint: str | None,
+    profile_style_hints: list[str] | None,
+    query_text: str,
+    tone_analysis: dict[str, Any] | None,
+) -> str | None:
+    chunks: list[str] = []
+    if isinstance(decision_style_hint, str) and decision_style_hint.strip():
+        chunks.append(decision_style_hint)
+    else:
+        if isinstance(interpreted_style_hint, str) and interpreted_style_hint.strip():
+            chunks.append(interpreted_style_hint)
+        profile_values = profile_style_hints if isinstance(profile_style_hints, list) else []
+        if profile_values:
+            chunks.extend(str(item) for item in profile_values[:3] if isinstance(item, str) and item.strip())
+
+    if isinstance(tone_style_hint, str) and tone_style_hint.strip():
+        chunks.append(tone_style_hint)
+
+    contextual_hint = _contextual_tone_adaptation_hint(query_text, tone_analysis)
+    if contextual_hint:
+        chunks.append(contextual_hint)
+
+    merged = _unique_style_hints(chunks, limit=5)
+    if not merged:
+        return None
+    return " ".join(merged)
 
 
 def _build_chat_system_prompt(
@@ -2002,8 +2085,14 @@ def create_run(project_id: str, payload: RunCreate, request: Request):
     interpreted_style_hint = _style_hint_from_interpretation(memory_interpretation)
     tone_style_hint = _style_hint_from_tone_analysis(tone_analysis)
     profile_style_hints = profile_context.get("style_hints") if isinstance(profile_context.get("style_hints"), list) else []
-    profile_style_hint = " ".join(profile_style_hints[:3]) if profile_style_hints else None
-    effective_response_style_hint = decision.response_style_hint or interpreted_style_hint or tone_style_hint or profile_style_hint
+    effective_response_style_hint = _build_effective_response_style_hint(
+        decision_style_hint=decision.response_style_hint,
+        interpreted_style_hint=interpreted_style_hint,
+        tone_style_hint=tone_style_hint,
+        profile_style_hints=profile_style_hints,
+        query_text=payload.query_text,
+        tone_analysis=tone_analysis,
+    )
     chat_response_mode: str | None = None
     chat_response_mode_reason: str | None = None
     if decision.intent == INTENT_CHAT:
